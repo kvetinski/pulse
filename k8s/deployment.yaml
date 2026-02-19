@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulse
+  namespace: account
+  labels:
+    app: pulse
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: pulse
+  template:
+    metadata:
+      labels:
+        app: pulse
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: pulse
+          image: pulse:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: pulse-config
+          env:
+            - name: PULSE_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

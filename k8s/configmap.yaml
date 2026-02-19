@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pulse-config
+  namespace: account
+data:
+  RUST_LOG: "info"
+  # Internal cluster DNS for account service.
+  PULSE_ENDPOINT: "http://account:8080"
+  PULSE_KAFKA_BROKERS: "kafka:9092"
+  PULSE_KAFKA_JOBS_TOPIC: "pulse.scenario.jobs"
+  PULSE_KAFKA_RESULTS_TOPIC: "pulse.scenario.results"
+  PULSE_KAFKA_GROUP_ID: "pulse-workers"
+  PULSE_REDIS_URL: "redis://redis:6379"
+  PULSE_REDIS_LEADER_KEY: "pulse:leader"
+  PULSE_REDIS_SCHEDULE_PREFIX: "pulse:schedule"
+  PULSE_REDIS_IDEMPOTENCY_PREFIX: "pulse:dedupe"
+  PULSE_LEADER_LOCK_TTL_MS: "10000"
+  PULSE_LEADER_RENEW_INTERVAL_MS: "3000"
+  PULSE_SCHEDULER_TICK_INTERVAL_MS: "500"

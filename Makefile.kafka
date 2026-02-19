@@ -1,0 +1,56 @@
+SHELL := /bin/bash
+
+KUBE_CONTEXT ?= kind-account
+KUBE_NAMESPACE ?= account
+KAFKA_DEPLOYMENT ?= kafka
+KAFKA_SERVICE ?= kafka
+KAFKA_BOOTSTRAP ?= kafka:9092
+TOPIC ?= pulse.scenario.jobs
+GROUP ?= pulse-workers
+MAX_MESSAGES ?= 20
+
+.PHONY: help k8s-apply k8s-delete k8s-status k8s-logs topics topic-describe consume consume-results groups compose-up compose-down compose-logs
+
+help: ## Show available Kafka targets
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-20s %s\n", $$1, $$2}'
+
+k8s-apply: ## Apply Kafka manifest and wait for rollout
+	kubectl --context $(KUBE_CONTEXT) apply -f k8s/kafka.yaml
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/$(KAFKA_DEPLOYMENT)
+
+k8s-delete: ## Delete Kafka deployment and service
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) delete deployment $(KAFKA_DEPLOYMENT) --ignore-not-found
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) delete service $(KAFKA_SERVICE) --ignore-not-found
+
+k8s-status: ## Show Kafka pod/deployment status
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) get deploy,pod -l app=kafka -o wide
+
+k8s-logs: ## Tail Kafka logs
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) logs -f deployment/$(KAFKA_DEPLOYMENT)
+
+topics: ## List topics
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) exec deploy/$(KAFKA_DEPLOYMENT) -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server $(KAFKA_BOOTSTRAP) --list
+
+topic-describe: ## Describe TOPIC (set TOPIC=...)
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) exec deploy/$(KAFKA_DEPLOYMENT) -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server $(KAFKA_BOOTSTRAP) --describe --topic $(TOPIC)
+
+consume: ## Consume TOPIC from beginning (set TOPIC=..., MAX_MESSAGES=...)
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) exec deploy/$(KAFKA_DEPLOYMENT) -- /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $(KAFKA_BOOTSTRAP) --topic $(TOPIC) --from-beginning --max-messages $(MAX_MESSAGES)
+
+consume-results: ## Consume results topic
+	$(MAKE) -f Makefile.kafka consume TOPIC=pulse.scenario.results MAX_MESSAGES=$(MAX_MESSAGES) KUBE_CONTEXT=$(KUBE_CONTEXT) KUBE_NAMESPACE=$(KUBE_NAMESPACE) KAFKA_DEPLOYMENT=$(KAFKA_DEPLOYMENT) KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
+
+groups: ## Describe consumer GROUP (set GROUP=...)
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) exec deploy/$(KAFKA_DEPLOYMENT) -- /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server $(KAFKA_BOOTSTRAP) --describe --group $(GROUP)
+
+compose-up: ## Start only Kafka in docker compose
+	docker compose up -d kafka
+
+compose-down: ## Stop only Kafka in docker compose
+	docker compose stop kafka
+
+compose-logs: ## Tail Kafka logs in docker compose
+	docker compose logs -f kafka
+
+#make -f Makefile.kafka topics
+#make -f Makefile.kafka consume TOPIC=pulse.scenario.jobs MAX_MESSAGES=10

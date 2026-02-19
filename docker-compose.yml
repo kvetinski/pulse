@@ -1,0 +1,74 @@
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: pulse-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: "0"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "0@localhost:9093"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+    ports:
+      - "19092:9092"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: pulse-redis
+    restart: unless-stopped
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pulse:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pulse
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      PULSE_ENDPOINT: ${PULSE_ENDPOINT:-http://host.docker.internal:8080}
+      PULSE_KAFKA_BROKERS: ${PULSE_KAFKA_BROKERS:-kafka:9092}
+      PULSE_KAFKA_JOBS_TOPIC: ${PULSE_KAFKA_JOBS_TOPIC:-pulse.scenario.jobs}
+      PULSE_KAFKA_RESULTS_TOPIC: ${PULSE_KAFKA_RESULTS_TOPIC:-pulse.scenario.results}
+      PULSE_KAFKA_GROUP_ID: ${PULSE_KAFKA_GROUP_ID:-pulse-workers}
+      PULSE_REDIS_URL: ${PULSE_REDIS_URL:-redis://redis:6379}
+      PULSE_REDIS_LEADER_KEY: ${PULSE_REDIS_LEADER_KEY:-pulse:leader}
+      PULSE_REDIS_SCHEDULE_PREFIX: ${PULSE_REDIS_SCHEDULE_PREFIX:-pulse:schedule}
+      PULSE_REDIS_IDEMPOTENCY_PREFIX: ${PULSE_REDIS_IDEMPOTENCY_PREFIX:-pulse:dedupe}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16

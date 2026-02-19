@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package account.v1;
+
+option go_package = "github.com/kvetinski/account/internal/adapters/grpcapi/accountv1;accountv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+message Account {
+  string id = 1;
+  string nick = 2;
+  string phone = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  google.protobuf.Timestamp deleted_at = 6;
+}
+
+message CreateAccountRequest {
+  string phone = 1;
+}
+
+message GetAccountRequest {
+  string id = 1;
+}
+
+message UpdateNickRequest {
+  string id = 1;
+  string nick = 2;
+}
+
+message DeleteAccountRequest {
+  string id = 1;
+}
+
+message AccountResponse {
+  Account account = 1;
+}
+
+service AccountService {
+  rpc CreateAccount(CreateAccountRequest) returns (AccountResponse);
+  rpc GetAccount(GetAccountRequest) returns (AccountResponse);
+  rpc UpdateNick(UpdateNickRequest) returns (AccountResponse);
+  rpc DeleteAccount(DeleteAccountRequest) returns (google.protobuf.Empty);
+}
