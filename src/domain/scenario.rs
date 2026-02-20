@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,17 +7,23 @@ use async_trait::async_trait;
 use crate::domain::context::ScenarioContext;
 use crate::domain::contracts::PartitionKeyStrategy;
 use crate::domain::error::PulseError;
-use crate::domain::ports::{AccountGateway, PhoneGenerator};
+use crate::domain::ports::DynamicGrpcGateway;
 
 #[derive(Clone)]
 pub struct StepPorts {
-    pub account_gateway: Arc<dyn AccountGateway>,
-    pub phone_generator: Arc<dyn PhoneGenerator>,
+    pub default_endpoint: String,
+    pub dynamic_grpc_gateways: HashMap<String, Arc<dyn DynamicGrpcGateway>>,
 }
 
 #[async_trait]
 pub trait Step: Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
+    fn requires_dynamic_grpc(&self) -> bool {
+        false
+    }
+    fn dynamic_grpc_endpoint_override(&self) -> Option<&str> {
+        None
+    }
     async fn execute(&self, ctx: &mut ScenarioContext, ports: &StepPorts)
     -> Result<(), PulseError>;
 }

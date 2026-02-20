@@ -24,6 +24,10 @@ pub struct ScenarioJob {
     pub scheduled_at_unix_ms: u128,
     pub slice: JobSlice,
     pub load: JobLoadConfig,
+    #[serde(default)]
+    pub attempt: u32,
+    #[serde(default)]
+    pub max_retries: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -75,6 +79,19 @@ pub struct ScenarioRunResult {
     pub scenario_latency_p95_ms: u64,
     pub scenario_latency_p99_ms: u64,
     pub error_breakdown: Vec<ErrorCount>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FailedScenarioJob {
+    pub schema_version: u16,
+    pub scenario_id: String,
+    pub run_id: String,
+    pub execution_key: String,
+    pub slice: JobSlice,
+    pub failed_at_unix_ms: u128,
+    pub attempt: u32,
+    pub max_retries: u32,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

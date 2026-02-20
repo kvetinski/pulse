@@ -11,8 +11,10 @@ use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use rdkafka::types::RDKafkaErrorCode;
 
-use crate::application::service::{CommitableJob, JobConsumer, JobPublisher, ResultPublisher};
-use crate::domain::contracts::{ScenarioJob, ScenarioRunResult};
+use crate::application::service::{
+    CommitableJob, DlqPublisher, JobConsumer, JobPublisher, ResultPublisher,
+};
+use crate::domain::contracts::{FailedScenarioJob, ScenarioJob, ScenarioRunResult};
 
 pub struct KafkaJobPublisher {
     producer: FutureProducer,
@@ -20,10 +22,14 @@ pub struct KafkaJobPublisher {
 }
 
 impl KafkaJobPublisher {
-    pub fn new(brokers: &str, topic: impl Into<String>) -> Result<Self, String> {
+    pub fn new(brokers: &str, topic: impl Into<String>, queue_capacity: usize) -> Result<Self, String> {
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
             .set("message.timeout.ms", "5000")
+            .set(
+                "queue.buffering.max.messages",
+                queue_capacity.max(1).to_string(),
+            )
             .create()
             .map_err(|e| format!("failed to create kafka producer: {e}"))?;
 
@@ -58,10 +64,14 @@ pub struct KafkaResultPublisher {
 }
 
 impl KafkaResultPublisher {
-    pub fn new(brokers: &str, topic: impl Into<String>) -> Result<Self, String> {
+    pub fn new(brokers: &str, topic: impl Into<String>, queue_capacity: usize) -> Result<Self, String> {
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
             .set("message.timeout.ms", "5000")
+            .set(
+                "queue.buffering.max.messages",
+                queue_capacity.max(1).to_string(),
+            )
             .create()
             .map_err(|e| format!("failed to create kafka producer: {e}"))?;
 
@@ -96,7 +106,12 @@ pub struct KafkaJobConsumer {
 }
 
 impl KafkaJobConsumer {
-    pub fn new(brokers: &str, group_id: &str, topic: &str) -> Result<Self, String> {
+    pub fn new(
+        brokers: &str,
+        group_id: &str,
+        topic: &str,
+        queue_capacity: usize,
+    ) -> Result<Self, String> {
         let consumer: StreamConsumer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
             .set("group.id", group_id)
@@ -104,6 +119,10 @@ impl KafkaJobConsumer {
             .set("enable.partition.eof", "false")
             .set("session.timeout.ms", "6000")
             .set("auto.offset.reset", "earliest")
+            .set(
+                "queued.max.messages.kbytes",
+                queue_capacity.max(1).to_string(),
+            )
             .create()
             .map_err(|e| format!("failed to create kafka consumer: {e}"))?;
 
@@ -114,6 +133,48 @@ impl KafkaJobConsumer {
         Ok(Self {
             consumer: Arc::new(consumer),
         })
+    }
+}
+
+pub struct KafkaDlqPublisher {
+    producer: FutureProducer,
+    topic: String,
+}
+
+impl KafkaDlqPublisher {
+    pub fn new(brokers: &str, topic: impl Into<String>, queue_capacity: usize) -> Result<Self, String> {
+        let producer: FutureProducer = ClientConfig::new()
+            .set("bootstrap.servers", brokers)
+            .set("message.timeout.ms", "5000")
+            .set(
+                "queue.buffering.max.messages",
+                queue_capacity.max(1).to_string(),
+            )
+            .create()
+            .map_err(|e| format!("failed to create kafka producer: {e}"))?;
+
+        Ok(Self {
+            producer,
+            topic: topic.into(),
+        })
+    }
+}
+
+#[async_trait]
+impl DlqPublisher for KafkaDlqPublisher {
+    async fn publish_failed_job(&self, key: &str, job: &FailedScenarioJob) -> Result<(), String> {
+        let payload = serde_json::to_string(job)
+            .map_err(|e| format!("failed to serialize failed scenario job: {e}"))?;
+
+        self.producer
+            .send(
+                FutureRecord::to(&self.topic).key(key).payload(&payload),
+                Duration::from_secs(5),
+            )
+            .await
+            .map_err(|(e, _)| format!("failed to publish dead-letter job: {e}"))?;
+
+        Ok(())
     }
 }
 

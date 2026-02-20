@@ -5,7 +5,10 @@ edition = "2024"
 
 [dependencies]
 async-trait = "0.1"
+axum = "0.7"
+base64 = "0.22"
 hdrhistogram = "7"
+prometheus = "0.13"
 prost = "0.13"
 prost-types = "0.13"
 rand = "0.9"
@@ -13,11 +16,9 @@ redis = { version = "0.27", features = ["tokio-comp"] }
 rdkafka = { version = "0.36", default-features = false, features = ["cmake-build", "tokio"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.12", features = ["transport"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
-
-[build-dependencies]
-tonic-build = "0.12"

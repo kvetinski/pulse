@@ -55,16 +55,60 @@ services:
     environment:
       RUST_LOG: ${RUST_LOG:-info}
       PULSE_ENDPOINT: ${PULSE_ENDPOINT:-http://host.docker.internal:8080}
+      # Compose scenario config (k8s uses /app/scenarios.k8s.yaml).
+      PULSE_SCENARIOS_FILE: ${PULSE_SCENARIOS_FILE:-/app/scenarios.yaml}
+      PULSE_GRPC_DESCRIPTOR_SET: ${PULSE_GRPC_DESCRIPTOR_SET:-/app/descriptors/services.pb}
       PULSE_KAFKA_BROKERS: ${PULSE_KAFKA_BROKERS:-kafka:9092}
       PULSE_KAFKA_JOBS_TOPIC: ${PULSE_KAFKA_JOBS_TOPIC:-pulse.scenario.jobs}
       PULSE_KAFKA_RESULTS_TOPIC: ${PULSE_KAFKA_RESULTS_TOPIC:-pulse.scenario.results}
+      PULSE_KAFKA_DLQ_TOPIC: ${PULSE_KAFKA_DLQ_TOPIC:-pulse.scenario.dlq}
       PULSE_KAFKA_GROUP_ID: ${PULSE_KAFKA_GROUP_ID:-pulse-workers}
+      PULSE_QUEUE_CAPACITY: ${PULSE_QUEUE_CAPACITY:-1024}
+      PULSE_WORKER_MAX_RETRIES: ${PULSE_WORKER_MAX_RETRIES:-2}
+      PULSE_WORKER_RETRY_BASE_DELAY_MS: ${PULSE_WORKER_RETRY_BASE_DELAY_MS:-500}
       PULSE_REDIS_URL: ${PULSE_REDIS_URL:-redis://redis:6379}
       PULSE_REDIS_LEADER_KEY: ${PULSE_REDIS_LEADER_KEY:-pulse:leader}
       PULSE_REDIS_SCHEDULE_PREFIX: ${PULSE_REDIS_SCHEDULE_PREFIX:-pulse:schedule}
       PULSE_REDIS_IDEMPOTENCY_PREFIX: ${PULSE_REDIS_IDEMPOTENCY_PREFIX:-pulse:dedupe}
+      PULSE_METRICS_ENABLED: ${PULSE_METRICS_ENABLED:-true}
+      PULSE_METRICS_BIND: ${PULSE_METRICS_BIND:-0.0.0.0:9090}
+    ports:
+      - "19090:9090"
+    volumes:
+      - ./scenarios.yaml:/app/scenarios.yaml:ro
+      - ./descriptors:/app/descriptors:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: pulse-prometheus
+    restart: unless-stopped
+    depends_on:
+      - pulse
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "19091:9090"
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: pulse-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "13000:3000"
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
 networks:
   default:

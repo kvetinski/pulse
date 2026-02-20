@@ -10,6 +10,7 @@ use crate::application::metrics::{GlobalSummary, WorkerMetrics};
 use crate::application::rate_limiter::TokenBucket;
 use crate::domain::context::ScenarioContext;
 use crate::domain::scenario::{RepeatPolicy, Scenario, StepPorts};
+use crate::infrastructure::metrics as runtime_metrics;
 
 #[derive(Clone, Debug)]
 pub struct RunnerConfig {
@@ -143,6 +144,7 @@ async fn execute_scenario(
     ports: StepPorts,
     worker_metrics: Arc<Mutex<WorkerMetrics>>,
 ) {
+    runtime_metrics::record_scenario_inflight_inc(&scenario.name);
     let scenario_start = Instant::now();
     let mut ctx = ScenarioContext::default();
 
@@ -150,6 +152,12 @@ async fn execute_scenario(
         let step_start = Instant::now();
         let result = step.execute(&mut ctx, &ports).await;
         let step_duration = step_start.elapsed();
+        runtime_metrics::record_step_execution(
+            &scenario.name,
+            step.name(),
+            step_duration,
+            result.is_ok(),
+        );
 
         {
             let mut metrics = worker_metrics.lock().await;
@@ -168,6 +176,12 @@ async fn execute_scenario(
                 let mut metrics = worker_metrics.lock().await;
                 metrics.record_error_kind(err.kind_label());
                 metrics.record_scenario(&scenario.name, scenario_duration, false);
+                runtime_metrics::record_scenario_execution(
+                    &scenario.name,
+                    scenario_duration,
+                    false,
+                );
+                runtime_metrics::record_scenario_inflight_dec(&scenario.name);
                 return;
             }
         }
@@ -176,4 +190,6 @@ async fn execute_scenario(
     let scenario_duration = scenario_start.elapsed();
     let mut metrics = worker_metrics.lock().await;
     metrics.record_scenario(&scenario.name, scenario_duration, true);
+    runtime_metrics::record_scenario_execution(&scenario.name, scenario_duration, true);
+    runtime_metrics::record_scenario_inflight_dec(&scenario.name);
 }

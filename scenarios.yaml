@@ -1,0 +1,65 @@
+version: 1
+scenarios:
+  - name: DynamicGrpcCreateGet
+    endpoint: http://host.docker.internal:8080
+    scenarios_per_sec: 3
+    max_concurrency: 10
+    duration: 20s
+    repeat:
+      type: once
+    partition_key_strategy: execution_key
+    steps:
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: CreateAccount
+        request_fields:
+          phone: "${gen.phone}"
+        extract:
+          user_id: "account.id"
+          created_phone: "account.phone"
+
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: GetAccount
+        # Optional per-step endpoint override.
+        endpoint: http://host.docker.internal:8080
+        request_fields:
+          id: "${ctx.user_id}"
+        extract:
+          fetched_id: "account.id"
+          fetched_phone: "account.phone"
+
+  - name: DynamicGrpcGetStaticBase64
+    endpoint: http://host.docker.internal:8080
+    scenarios_per_sec: 100
+    max_concurrency: 100
+    duration: 5s
+    repeat:
+      type: every
+      interval: 5s
+    partition_key_strategy: execution_key
+    steps:
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: CreateAccount
+        request_fields:
+          phone: "${gen.phone}"
+        extract:
+          user_id: "account.id"
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: GetAccount
+        request_fields:
+          id: "${ctx.user_id}"
+        extract:
+          fetched_id: "account.id"
+          fetched_phone: "account.phone"
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: DeleteAccount
+        request_fields:
+          id: "${ctx.user_id}"
+# request_base64 templating with ${ctx.*}:
+# It works when the context value is already a full base64-encoded protobuf request.
+# Example (syntax only):
+#   request_base64: "${ctx.get_account_request_b64}"

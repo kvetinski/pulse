@@ -4,7 +4,7 @@ metadata:
   name: pulse
   namespace: pulse
 spec:
-  minAvailable: 1
+  minAvailable: 2
   selector:
     matchLabels:
       app: pulse

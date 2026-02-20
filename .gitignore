@@ -1,1 +1,3 @@
 /target
+descriptors/*.pb
+*.local.md

@@ -1,45 +1,35 @@
 use async_trait::async_trait;
+use serde_json::Value;
 
 use crate::domain::error::PulseError;
 
 #[derive(Clone, Debug)]
-pub struct CreateAccountInput {
-    pub phone: String,
+pub struct DynamicGrpcRequest {
+    pub service: String,
+    pub method: String,
+    pub payload: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
-pub struct CreateAccountOutput {
-    pub id: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct GetAccountInput {
-    pub id: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct GetAccountOutput {
-    pub id: String,
-    pub phone: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct DeleteAccountInput {
-    pub id: String,
+pub struct DynamicGrpcResponse {
+    pub payload: Vec<u8>,
 }
 
 #[async_trait]
-pub trait AccountGateway: Send + Sync {
-    async fn create_account(
+pub trait DynamicGrpcGateway: Send + Sync {
+    async fn unary(&self, input: DynamicGrpcRequest) -> Result<DynamicGrpcResponse, PulseError>;
+
+    fn encode_request_fields(
         &self,
-        input: CreateAccountInput,
-    ) -> Result<CreateAccountOutput, PulseError>;
+        service: &str,
+        method: &str,
+        fields: &Value,
+    ) -> Result<Vec<u8>, PulseError>;
 
-    async fn get_account(&self, input: GetAccountInput) -> Result<GetAccountOutput, PulseError>;
-
-    async fn delete_account(&self, input: DeleteAccountInput) -> Result<(), PulseError>;
-}
-
-pub trait PhoneGenerator: Send + Sync {
-    fn generate(&self) -> String;
+    fn decode_response_fields(
+        &self,
+        service: &str,
+        method: &str,
+        payload: &[u8],
+    ) -> Result<Value, PulseError>;
 }
