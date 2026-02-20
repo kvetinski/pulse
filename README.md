@@ -21,6 +21,9 @@ Implemented:
 - Dynamic gRPC unary execution using compiled descriptor sets.
 - Request templating (`${ctx.*}`, `${gen.*}`), response extraction, context reuse.
 - Distributed scheduler/worker runtime with Redis leader election and Kafka job queue.
+- Graceful shutdown handling (`SIGINT`/`SIGTERM`) across runtime loops.
+- Worker-level retry with exponential backoff and Kafka dead-letter topic.
+- Bounded Kafka producer/consumer client queues.
 - Docker Compose and Kubernetes manifests.
 
 Not implemented yet:
@@ -252,7 +255,7 @@ Access examples:
 
 ```bash
 kubectl --context kind-account -n pulse port-forward svc/prometheus 9090:9090
-kubectl --context kind-account -n pulse port-forward svc/grafana 3000:3000
+kubectl --context kind-account -n pulse port-forward svc/grafana 3001:3000
 ```
 
 If metrics-server is not healthy on kind:
@@ -347,9 +350,14 @@ make test-integration-compose \
 
 ## Roadmap
 
-Near-term improvements:
+Short-term:
 
 - Implement HTTP step adapter.
 - Add per-step retry policies (currently worker-level retry).
 - Add DLQ replay tooling.
 - Add k8s base/overlay split for environment-specific deploys.
+
+Medium-term:
+
+- Implement WebSocket step adapter.
+- Add gRPC streaming support (client/server/bidi).
