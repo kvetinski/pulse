@@ -89,6 +89,25 @@ pub trait CommitableJob {
     fn commit(self) -> Result<(), String>;
 }
 
+pub struct PulseNodeDependencies<E, S, JP, JC, I, RP, DP>
+where
+    E: LeaderElector,
+    S: DueStateStore,
+    JP: JobPublisher,
+    JC: JobConsumer,
+    I: IdempotencyStore,
+    RP: ResultPublisher,
+    DP: DlqPublisher,
+{
+    pub elector: Arc<E>,
+    pub due_store: Arc<S>,
+    pub job_publisher: Arc<JP>,
+    pub job_consumer: Arc<JC>,
+    pub idempotency_store: Arc<I>,
+    pub result_publisher: Arc<RP>,
+    pub dlq_publisher: Arc<DP>,
+}
+
 pub struct PulseNode<E, S, JP, JC, I, RP, DP>
 where
     E: LeaderElector,
@@ -122,13 +141,7 @@ where
     DP: DlqPublisher + 'static,
 {
     pub fn new(
-        elector: Arc<E>,
-        due_store: Arc<S>,
-        job_publisher: Arc<JP>,
-        job_consumer: Arc<JC>,
-        idempotency_store: Arc<I>,
-        result_publisher: Arc<RP>,
-        dlq_publisher: Arc<DP>,
+        deps: PulseNodeDependencies<E, S, JP, JC, I, RP, DP>,
         plans: Vec<ScenarioExecutionPlan>,
         config: NodeRuntimeConfig,
     ) -> Self {
@@ -138,13 +151,13 @@ where
             .collect();
 
         Self {
-            elector,
-            due_store,
-            job_publisher,
-            job_consumer,
-            idempotency_store,
-            result_publisher,
-            dlq_publisher,
+            elector: deps.elector,
+            due_store: deps.due_store,
+            job_publisher: deps.job_publisher,
+            job_consumer: deps.job_consumer,
+            idempotency_store: deps.idempotency_store,
+            result_publisher: deps.result_publisher,
+            dlq_publisher: deps.dlq_publisher,
             plans: Arc::new(map),
             config,
         }
@@ -171,16 +184,15 @@ where
             shutdown_rx.clone(),
         ));
 
-        join_set.spawn(worker_loop(
-            self.plans.clone(),
-            self.job_consumer.clone(),
-            self.job_publisher.clone(),
-            self.idempotency_store.clone(),
-            self.result_publisher.clone(),
-            self.dlq_publisher.clone(),
-            self.config.worker_retry_base_delay,
-            shutdown_rx,
-        ));
+        let worker_runtime = WorkerRuntime {
+            consumer: self.job_consumer.clone(),
+            job_publisher: self.job_publisher.clone(),
+            idempotency_store: self.idempotency_store.clone(),
+            result_publisher: self.result_publisher.clone(),
+            dlq_publisher: self.dlq_publisher.clone(),
+            retry_base_delay: self.config.worker_retry_base_delay,
+        };
+        join_set.spawn(worker_loop(self.plans.clone(), worker_runtime, shutdown_rx));
 
         while let Some(result) = join_set.join_next().await {
             if let Err(err) = result {
@@ -343,6 +355,22 @@ async fn scheduler_loop<S: DueStateStore, JP: JobPublisher>(
     }
 }
 
+struct WorkerRuntime<JC, JP, I, RP, DP>
+where
+    JC: JobConsumer,
+    JP: JobPublisher,
+    I: IdempotencyStore,
+    RP: ResultPublisher,
+    DP: DlqPublisher,
+{
+    consumer: Arc<JC>,
+    job_publisher: Arc<JP>,
+    idempotency_store: Arc<I>,
+    result_publisher: Arc<RP>,
+    dlq_publisher: Arc<DP>,
+    retry_base_delay: Duration,
+}
+
 fn calculate_slices(scenarios_per_sec: f64, max_concurrency: usize) -> u32 {
     let bounded_sps = scenarios_per_sec.max(1.0);
     let bounded_concurrency = max_concurrency.max(1) as u32;
@@ -362,44 +390,9 @@ fn calculate_slices(scenarios_per_sec: f64, max_concurrency: usize) -> u32 {
         .min(MAX_AUTO_SLICES)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::calculate_slices;
-
-    #[test]
-    fn calculates_single_slice_for_low_load() {
-        assert_eq!(calculate_slices(1.0, 1), 1);
-    }
-
-    #[test]
-    fn scales_slices_by_concurrency() {
-        assert_eq!(calculate_slices(10.0, 50), 2);
-    }
-
-    #[test]
-    fn scales_slices_by_rate() {
-        assert_eq!(calculate_slices(200.0, 200), 20);
-    }
-
-    #[test]
-    fn never_exceeds_max_concurrency() {
-        assert_eq!(calculate_slices(1_000.0, 5), 5);
-    }
-
-    #[test]
-    fn enforces_global_upper_bound() {
-        assert_eq!(calculate_slices(10_000.0, 1_000), 128);
-    }
-}
-
 async fn worker_loop<JC, JP, I, RP, DP>(
     plans: Arc<HashMap<String, ScenarioExecutionPlan>>,
-    consumer: Arc<JC>,
-    job_publisher: Arc<JP>,
-    idempotency_store: Arc<I>,
-    result_publisher: Arc<RP>,
-    dlq_publisher: Arc<DP>,
-    retry_base_delay: Duration,
+    runtime: WorkerRuntime<JC, JP, I, RP, DP>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) where
     JC: JobConsumer,
@@ -418,7 +411,7 @@ async fn worker_loop<JC, JP, I, RP, DP>(
         }
 
         let recv_result = tokio::select! {
-            received = consumer.recv() => received,
+            received = runtime.consumer.recv() => received,
             _ = shutdown_rx.changed() => {
                 if shutdown_requested(&shutdown_rx) {
                     info!("worker loop stopping");
@@ -464,7 +457,7 @@ async fn worker_loop<JC, JP, I, RP, DP>(
                 max_retries: job.max_retries,
                 reason: "unknown scenario".to_string(),
             };
-            if let Err(err) = publish_to_dlq(&dlq_publisher, &failed_job).await {
+            if let Err(err) = publish_to_dlq(&runtime.dlq_publisher, &failed_job).await {
                 runtime_metrics::record_worker_dlq_publish_failure(&job.scenario_id);
                 error!(execution_key = %job.execution_key, error = %err, "failed to publish unknown-scenario job to dlq");
             } else {
@@ -480,7 +473,7 @@ async fn worker_loop<JC, JP, I, RP, DP>(
         };
 
         let idempotency_key = format!("{}:attempt-{}", job.execution_key, job.attempt);
-        if !idempotency_store.claim_once(&idempotency_key).await {
+        if !runtime.idempotency_store.claim_once(&idempotency_key).await {
             runtime_metrics::record_worker_duplicate_job();
             info!(
                 execution_key = %job.execution_key,
@@ -565,7 +558,7 @@ async fn worker_loop<JC, JP, I, RP, DP>(
             error_breakdown,
         };
 
-        if let Err(err) = result_publisher.publish_result(&result).await {
+        if let Err(err) = runtime.result_publisher.publish_result(&result).await {
             runtime_metrics::record_worker_result_publish_failure();
             error!(execution_key = %job.execution_key, error = %err, "failed to publish result");
         } else {
@@ -580,7 +573,7 @@ async fn worker_loop<JC, JP, I, RP, DP>(
             if can_retry {
                 let mut retry_job = job.clone();
                 retry_job.attempt = retry_job.attempt.saturating_add(1);
-                let retry_delay = next_retry_delay(retry_base_delay, job.attempt);
+                let retry_delay = next_retry_delay(runtime.retry_base_delay, job.attempt);
                 info!(
                     execution_key = %job.execution_key,
                     current_attempt = job.attempt,
@@ -614,7 +607,7 @@ async fn worker_loop<JC, JP, I, RP, DP>(
                         max_retries: job.max_retries,
                         reason: "shutdown before retry publish".to_string(),
                     };
-                    if let Err(err) = publish_to_dlq(&dlq_publisher, &failed_job).await {
+                    if let Err(err) = publish_to_dlq(&runtime.dlq_publisher, &failed_job).await {
                         runtime_metrics::record_worker_dlq_publish_failure(&job.scenario_id);
                         error!(execution_key = %job.execution_key, error = %err, "failed to publish shutdown retry fallback to dlq");
                     } else {
@@ -630,8 +623,16 @@ async fn worker_loop<JC, JP, I, RP, DP>(
                     return;
                 }
 
-                let retry_key = plan.scenario.config.partition_key_strategy.key_for(&retry_job);
-                if let Err(err) = job_publisher.publish_job(&retry_key, &retry_job).await {
+                let retry_key = plan
+                    .scenario
+                    .config
+                    .partition_key_strategy
+                    .key_for(&retry_job);
+                if let Err(err) = runtime
+                    .job_publisher
+                    .publish_job(&retry_key, &retry_job)
+                    .await
+                {
                     runtime_metrics::record_worker_retry_job_publish_failure(&job.scenario_id);
                     error!(
                         execution_key = %job.execution_key,
@@ -650,7 +651,8 @@ async fn worker_loop<JC, JP, I, RP, DP>(
                         max_retries: retry_job.max_retries,
                         reason: format!("failed to publish retry: {err}"),
                     };
-                    if let Err(dlq_err) = publish_to_dlq(&dlq_publisher, &failed_job).await {
+                    if let Err(dlq_err) = publish_to_dlq(&runtime.dlq_publisher, &failed_job).await
+                    {
                         runtime_metrics::record_worker_dlq_publish_failure(&job.scenario_id);
                         error!(execution_key = %job.execution_key, error = %dlq_err, "failed to publish retry failure to dlq");
                     } else {
@@ -677,7 +679,7 @@ async fn worker_loop<JC, JP, I, RP, DP>(
                     max_retries: job.max_retries,
                     reason: "scenario execution failed and max retries reached".to_string(),
                 };
-                if let Err(err) = publish_to_dlq(&dlq_publisher, &failed_job).await {
+                if let Err(err) = publish_to_dlq(&runtime.dlq_publisher, &failed_job).await {
                     runtime_metrics::record_worker_dlq_publish_failure(&job.scenario_id);
                     error!(execution_key = %job.execution_key, error = %err, "failed to publish max-retries failure to dlq");
                 } else {
@@ -736,5 +738,35 @@ fn status_label(status: &ScenarioRunStatus) -> &'static str {
     match status {
         ScenarioRunStatus::Success => "success",
         ScenarioRunStatus::Failed => "failure",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calculate_slices;
+
+    #[test]
+    fn calculates_single_slice_for_low_load() {
+        assert_eq!(calculate_slices(1.0, 1), 1);
+    }
+
+    #[test]
+    fn scales_slices_by_concurrency() {
+        assert_eq!(calculate_slices(10.0, 50), 2);
+    }
+
+    #[test]
+    fn scales_slices_by_rate() {
+        assert_eq!(calculate_slices(200.0, 200), 20);
+    }
+
+    #[test]
+    fn never_exceeds_max_concurrency() {
+        assert_eq!(calculate_slices(1_000.0, 5), 5);
+    }
+
+    #[test]
+    fn enforces_global_upper_bound() {
+        assert_eq!(calculate_slices(10_000.0, 1_000), 128);
     }
 }

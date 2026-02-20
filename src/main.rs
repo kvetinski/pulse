@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pulse::application::scenarios::load_scenarios;
-use pulse::application::service::{NodeRuntimeConfig, PulseNode, ScenarioExecutionPlan};
+use pulse::application::service::{
+    NodeRuntimeConfig, PulseNode, PulseNodeDependencies, ScenarioExecutionPlan,
+};
 use pulse::domain::ports::DynamicGrpcGateway;
 use pulse::domain::scenario::StepPorts;
 use pulse::infrastructure::config::AppConfig;
@@ -65,12 +67,12 @@ async fn main() {
         &app_config.kafka_jobs_topic,
         app_config.queue_capacity,
     ) {
-            Ok(p) => Arc::new(p),
-            Err(err) => {
-                error!(error = %err, "failed to create kafka job publisher");
-                std::process::exit(1);
-            }
-        };
+        Ok(p) => Arc::new(p),
+        Err(err) => {
+            error!(error = %err, "failed to create kafka job publisher");
+            std::process::exit(1);
+        }
+    };
 
     ensure_topics_with_retry(
         &app_config.kafka_brokers,
@@ -87,11 +89,11 @@ async fn main() {
         &app_config.kafka_results_topic,
         app_config.queue_capacity,
     ) {
-            Ok(p) => Arc::new(p),
-            Err(err) => {
-                error!(error = %err, "failed to create kafka result publisher");
-                std::process::exit(1);
-            }
+        Ok(p) => Arc::new(p),
+        Err(err) => {
+            error!(error = %err, "failed to create kafka result publisher");
+            std::process::exit(1);
+        }
     };
 
     let dlq_publisher = match KafkaDlqPublisher::new(
@@ -191,13 +193,15 @@ async fn main() {
     }
 
     let node = PulseNode::new(
-        elector,
-        due_store,
-        job_publisher,
-        job_consumer,
-        idempotency_store,
-        result_publisher,
-        dlq_publisher,
+        PulseNodeDependencies {
+            elector,
+            due_store,
+            job_publisher,
+            job_consumer,
+            idempotency_store,
+            result_publisher,
+            dlq_publisher,
+        },
         plans,
         NodeRuntimeConfig {
             leader_renew_interval: app_config.leader_renew_interval,

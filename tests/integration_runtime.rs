@@ -8,7 +8,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use pulse::application::service::{
     CommitableJob, DlqPublisher, DueStateStore, IdempotencyStore, JobConsumer, JobPublisher,
-    LeaderElector, NodeRuntimeConfig, PulseNode, ResultPublisher, ScenarioExecutionPlan,
+    LeaderElector, NodeRuntimeConfig, PulseNode, PulseNodeDependencies, ResultPublisher,
+    ScenarioExecutionPlan,
 };
 use pulse::domain::context::ScenarioContext;
 use pulse::domain::contracts::{
@@ -224,13 +225,15 @@ async fn end_to_end_pipeline_publishes_success_result() {
     let dlq_publisher = Arc::new(InMemoryDlqPublisher);
 
     let node = PulseNode::new(
-        elector,
-        due_store,
-        publisher.clone(),
-        consumer,
-        idempotency,
-        result_publisher.clone(),
-        dlq_publisher,
+        PulseNodeDependencies {
+            elector,
+            due_store,
+            job_publisher: publisher.clone(),
+            job_consumer: consumer,
+            idempotency_store: idempotency,
+            result_publisher: result_publisher.clone(),
+            dlq_publisher,
+        },
         vec![build_plan(PartitionKeyStrategy::ScenarioId)],
         NodeRuntimeConfig {
             leader_renew_interval: Duration::from_millis(10),
@@ -245,7 +248,7 @@ async fn end_to_end_pipeline_publishes_success_result() {
 
     timeout(Duration::from_secs(2), async {
         loop {
-            if result_publisher.results.lock().await.len() >= 1 {
+            if !result_publisher.results.lock().await.is_empty() {
                 break;
             }
             sleep(Duration::from_millis(10)).await;
@@ -291,13 +294,15 @@ async fn duplicate_jobs_are_deduplicated_by_idempotency_store() {
     let dlq_publisher = Arc::new(InMemoryDlqPublisher);
 
     let node = PulseNode::new(
-        elector,
-        due_store,
-        publisher,
-        consumer,
-        idempotency,
-        result_publisher.clone(),
-        dlq_publisher,
+        PulseNodeDependencies {
+            elector,
+            due_store,
+            job_publisher: publisher,
+            job_consumer: consumer,
+            idempotency_store: idempotency,
+            result_publisher: result_publisher.clone(),
+            dlq_publisher,
+        },
         vec![build_plan(PartitionKeyStrategy::ExecutionKey)],
         NodeRuntimeConfig {
             leader_renew_interval: Duration::from_millis(10),

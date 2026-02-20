@@ -164,26 +164,22 @@ async fn execute_scenario(
             metrics.record_step(step.name(), step_duration, result.is_ok());
         }
 
-        if result.is_err() {
-            if let Err(err) = &result {
-                error!(
-                    scenario = %scenario.name,
-                    step = step.name(),
-                    error = %err,
-                    "step execution failed"
-                );
-                let scenario_duration = scenario_start.elapsed();
-                let mut metrics = worker_metrics.lock().await;
-                metrics.record_error_kind(err.kind_label());
-                metrics.record_scenario(&scenario.name, scenario_duration, false);
-                runtime_metrics::record_scenario_execution(
-                    &scenario.name,
-                    scenario_duration,
-                    false,
-                );
-                runtime_metrics::record_scenario_inflight_dec(&scenario.name);
-                return;
-            }
+        if result.is_err()
+            && let Err(err) = &result
+        {
+            error!(
+                scenario = %scenario.name,
+                step = step.name(),
+                error = %err,
+                "step execution failed"
+            );
+            let scenario_duration = scenario_start.elapsed();
+            let mut metrics = worker_metrics.lock().await;
+            metrics.record_error_kind(err.kind_label());
+            metrics.record_scenario(&scenario.name, scenario_duration, false);
+            runtime_metrics::record_scenario_execution(&scenario.name, scenario_duration, false);
+            runtime_metrics::record_scenario_inflight_dec(&scenario.name);
+            return;
         }
     }
 

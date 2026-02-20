@@ -40,6 +40,12 @@ impl MetricsBucket {
     }
 }
 
+impl Default for MetricsBucket {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct WorkerMetrics {
     pub scenario_metrics: HashMap<String, MetricsBucket>,
     pub step_metrics: HashMap<String, MetricsBucket>,
@@ -58,19 +64,25 @@ impl WorkerMetrics {
     pub fn record_step(&mut self, step_name: &str, duration: Duration, ok: bool) {
         self.step_metrics
             .entry(step_name.to_string())
-            .or_insert_with(MetricsBucket::new)
+            .or_default()
             .record(duration, ok);
     }
 
     pub fn record_scenario(&mut self, scenario_name: &str, duration: Duration, ok: bool) {
         self.scenario_metrics
             .entry(scenario_name.to_string())
-            .or_insert_with(MetricsBucket::new)
+            .or_default()
             .record(duration, ok);
     }
 
     pub fn record_error_kind(&mut self, kind: String) {
         *self.error_counts.entry(kind).or_insert(0) += 1;
+    }
+}
+
+impl Default for WorkerMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -93,14 +105,14 @@ impl GlobalSummary {
         for (name, bucket) in &worker.scenario_metrics {
             self.scenario_metrics
                 .entry(name.clone())
-                .or_insert_with(MetricsBucket::new)
+                .or_default()
                 .merge_from(bucket);
         }
 
         for (name, bucket) in &worker.step_metrics {
             self.step_metrics
                 .entry(name.clone())
-                .or_insert_with(MetricsBucket::new)
+                .or_default()
                 .merge_from(bucket);
         }
 
@@ -151,5 +163,11 @@ impl GlobalSummary {
                 println!("  {kind}: {count}");
             }
         }
+    }
+}
+
+impl Default for GlobalSummary {
+    fn default() -> Self {
+        Self::new()
     }
 }

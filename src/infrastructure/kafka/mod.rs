@@ -22,7 +22,11 @@ pub struct KafkaJobPublisher {
 }
 
 impl KafkaJobPublisher {
-    pub fn new(brokers: &str, topic: impl Into<String>, queue_capacity: usize) -> Result<Self, String> {
+    pub fn new(
+        brokers: &str,
+        topic: impl Into<String>,
+        queue_capacity: usize,
+    ) -> Result<Self, String> {
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
             .set("message.timeout.ms", "5000")
@@ -64,7 +68,11 @@ pub struct KafkaResultPublisher {
 }
 
 impl KafkaResultPublisher {
-    pub fn new(brokers: &str, topic: impl Into<String>, queue_capacity: usize) -> Result<Self, String> {
+    pub fn new(
+        brokers: &str,
+        topic: impl Into<String>,
+        queue_capacity: usize,
+    ) -> Result<Self, String> {
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
             .set("message.timeout.ms", "5000")
@@ -142,7 +150,11 @@ pub struct KafkaDlqPublisher {
 }
 
 impl KafkaDlqPublisher {
-    pub fn new(brokers: &str, topic: impl Into<String>, queue_capacity: usize) -> Result<Self, String> {
+    pub fn new(
+        brokers: &str,
+        topic: impl Into<String>,
+        queue_capacity: usize,
+    ) -> Result<Self, String> {
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
             .set("message.timeout.ms", "5000")

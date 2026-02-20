@@ -142,10 +142,10 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
             errors.push(format!("{prefix}.name '{}' is duplicated", scenario.name));
         }
 
-        if let Some(endpoint) = &scenario.endpoint {
-            if endpoint.trim().is_empty() {
-                errors.push(format!("{prefix}.endpoint must not be empty when provided"));
-            }
+        if let Some(endpoint) = &scenario.endpoint
+            && endpoint.trim().is_empty()
+        {
+            errors.push(format!("{prefix}.endpoint must not be empty when provided"));
         }
         if !scenario.scenarios_per_sec.is_finite() || scenario.scenarios_per_sec <= 0.0 {
             errors.push(format!("{prefix}.scenarios_per_sec must be > 0"));
@@ -188,12 +188,12 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
                     extract,
                     response_payload_context_key,
                 } => {
-                    if let Some(step_endpoint) = endpoint {
-                        if step_endpoint.trim().is_empty() {
-                            errors.push(format!(
-                                "{step_prefix}.endpoint must not be empty when provided"
-                            ));
-                        }
+                    if let Some(step_endpoint) = endpoint
+                        && step_endpoint.trim().is_empty()
+                    {
+                        errors.push(format!(
+                            "{step_prefix}.endpoint must not be empty when provided"
+                        ));
                     }
                     if service.trim().is_empty() {
                         errors.push(format!("{step_prefix}.service must not be empty"));
@@ -221,12 +221,12 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
                             "{step_prefix} must define only one of request_base64 or request_fields"
                         ));
                     }
-                    if let Some(fields) = request_fields {
-                        if !fields.is_object() {
-                            errors.push(format!(
-                                "{step_prefix}.request_fields must be a JSON object"
-                            ));
-                        }
+                    if let Some(fields) = request_fields
+                        && !fields.is_object()
+                    {
+                        errors.push(format!(
+                            "{step_prefix}.request_fields must be a JSON object"
+                        ));
                     }
                     if let Some(extract_map) = extract {
                         for (ctx_key, response_path) in extract_map {
@@ -242,12 +242,12 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
                             }
                         }
                     }
-                    if let Some(key) = response_payload_context_key {
-                        if key.trim().is_empty() {
-                            errors.push(format!(
-                                "{step_prefix}.response_payload_context_key must not be empty when provided"
-                            ));
-                        }
+                    if let Some(key) = response_payload_context_key
+                        && key.trim().is_empty()
+                    {
+                        errors.push(format!(
+                            "{step_prefix}.response_payload_context_key must not be empty when provided"
+                        ));
                     }
                 }
                 StepEntry::Http { method, url } => {

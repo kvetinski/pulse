@@ -361,3 +361,7 @@ Medium-term:
 
 - Implement WebSocket step adapter.
 - Add gRPC streaming support (client/server/bidi).
+
+## License
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

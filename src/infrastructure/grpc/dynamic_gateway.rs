@@ -38,6 +38,9 @@ struct MessageSchema {
     fields_by_number: HashMap<u32, FieldSchema>,
 }
 
+type MethodRegistry = HashMap<(String, String), MethodMeta>;
+type MessageRegistry = HashMap<String, MessageSchema>;
+
 #[derive(Clone, Debug)]
 struct FieldSchema {
     name: String,
@@ -171,15 +174,7 @@ impl DynamicGrpcGateway for DescriptorBackedGrpcGateway {
     }
 }
 
-fn load_schema(
-    path: &str,
-) -> Result<
-    (
-        HashMap<(String, String), MethodMeta>,
-        HashMap<String, MessageSchema>,
-    ),
-    PulseError,
-> {
+fn load_schema(path: &str) -> Result<(MethodRegistry, MessageRegistry), PulseError> {
     let bytes = fs::read(path)
         .map_err(|e| PulseError::Client(format!("failed to read descriptor set '{path}': {e}")))?;
     let descriptor_set = prost_types::FileDescriptorSet::decode(bytes.as_slice()).map_err(|e| {
@@ -188,8 +183,8 @@ fn load_schema(
         ))
     })?;
 
-    let mut messages = HashMap::new();
-    let mut methods = HashMap::new();
+    let mut messages: MessageRegistry = HashMap::new();
+    let mut methods: MethodRegistry = HashMap::new();
 
     for file in descriptor_set.file {
         let package = file.package.unwrap_or_default();
@@ -318,10 +313,10 @@ fn collect_messages(
             };
 
             fields_by_name.insert(field_name.clone(), number);
-            if let Some(json_name) = &field.json_name {
-                if !json_name.trim().is_empty() {
-                    fields_by_name.insert(json_name.clone(), number);
-                }
+            if let Some(json_name) = &field.json_name
+                && !json_name.trim().is_empty()
+            {
+                fields_by_name.insert(json_name.clone(), number);
             }
             fields_by_number.insert(number, schema);
         }
