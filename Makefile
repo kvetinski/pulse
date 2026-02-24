@@ -25,7 +25,7 @@ PROTO_FILES ?= src/account.proto
 TEST_KAFKA_BROKERS ?= 127.0.0.1:19092
 TEST_REDIS_URL ?= redis://127.0.0.1:16379
 
-.PHONY: help start start-release check fmt clippy proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-fix-metrics-server
+.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-fix-metrics-server
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-24s %s\n", $$1, $$2}'
@@ -44,6 +44,17 @@ fmt: ## Run cargo fmt
 
 clippy: ## Run cargo clippy with warnings as errors
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
+
+bench: ## Run benchmark binary (override env: PULSE_BENCH_* iterations)
+	$(CARGO) run --release --bin pulse_bench
+
+ci-check: ## Full local quality gates used in CI
+	$(CARGO) fmt --all -- --check
+	$(CARGO) clippy --locked --all-targets --all-features -- -D warnings
+	$(CARGO) test --locked --all-targets --all-features
+	PULSE_BENCH_TOKEN_BUCKET_ITERATIONS=200 PULSE_BENCH_RUNNER_ITERATIONS=5 $(CARGO) run --locked --release --bin pulse_bench
+	docker compose config -q
+	$(MAKE) proto-descriptor
 
 proto-descriptor: ## Build descriptor set (override PROTO_FILES/PROTO_SRC_DIRS/PROTO_IMPORT_DIRS)
 	@mkdir -p $(PROTO_OUT_DIR)
@@ -85,12 +96,12 @@ test-compose-up: ## Start Kafka and Redis for docker-backed integration tests
 	docker compose up -d --wait kafka redis
 
 test-compose-down: ## Stop test dependencies
-	docker compose stop kafka redis
+	docker compose down --remove-orphans
 
 test-integration-compose: test-compose-up ## Run ignored integration tests against docker compose dependencies
 	PULSE_TEST_KAFKA_BROKERS=$(TEST_KAFKA_BROKERS) \
 	PULSE_TEST_REDIS_URL=$(TEST_REDIS_URL) \
-	$(CARGO) test --test integration_compose -- --ignored --nocapture
+	$(CARGO) test --locked --test integration_compose -- --ignored --nocapture
 
 kind-build: ## Build local image for kind (LOCAL_IMAGE=pulse:local)
 	docker build -t $(LOCAL_IMAGE) .

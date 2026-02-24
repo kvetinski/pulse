@@ -13,7 +13,7 @@ use pulse::application::service::{
 };
 use pulse::domain::context::ScenarioContext;
 use pulse::domain::contracts::{
-    PartitionKeyStrategy, ScenarioJob, ScenarioRunResult, ScenarioRunStatus,
+    FailedScenarioJob, PartitionKeyStrategy, ScenarioJob, ScenarioRunResult, ScenarioRunStatus,
 };
 use pulse::domain::error::PulseError;
 use pulse::domain::scenario::{RepeatPolicy, Scenario, ScenarioConfig, Step, StepPorts};
@@ -66,6 +66,7 @@ impl IdempotencyStore for InMemoryIdempotencyStore {
 struct InMemoryJobPublisher {
     tx: mpsc::UnboundedSender<InMemoryJobMessage>,
     published_keys: Arc<Mutex<Vec<String>>>,
+    published_jobs: Arc<Mutex<Vec<ScenarioJob>>>,
     duplicate_each_job: bool,
     commit_counter: Arc<AtomicUsize>,
 }
@@ -79,6 +80,7 @@ impl InMemoryJobPublisher {
         Self {
             tx,
             published_keys: Arc::new(Mutex::new(Vec::new())),
+            published_jobs: Arc::new(Mutex::new(Vec::new())),
             duplicate_each_job,
             commit_counter,
         }
@@ -89,6 +91,7 @@ impl InMemoryJobPublisher {
 impl JobPublisher for InMemoryJobPublisher {
     async fn publish_job(&self, key: &str, job: &ScenarioJob) -> Result<(), String> {
         self.published_keys.lock().await.push(key.to_string());
+        self.published_jobs.lock().await.push(job.clone());
 
         let msg = InMemoryJobMessage {
             job: job.clone(),
@@ -159,20 +162,20 @@ impl ResultPublisher for InMemoryResultPublisher {
 }
 
 #[derive(Default)]
-struct InMemoryDlqPublisher;
+struct InMemoryDlqPublisher {
+    failed_jobs: Mutex<Vec<FailedScenarioJob>>,
+}
 
 #[async_trait]
 impl DlqPublisher for InMemoryDlqPublisher {
-    async fn publish_failed_job(
-        &self,
-        _key: &str,
-        _job: &pulse::domain::contracts::FailedScenarioJob,
-    ) -> Result<(), String> {
+    async fn publish_failed_job(&self, _key: &str, job: &FailedScenarioJob) -> Result<(), String> {
+        self.failed_jobs.lock().await.push(job.clone());
         Ok(())
     }
 }
 
 struct NoopStep;
+struct AlwaysFailStep;
 
 #[async_trait]
 impl Step for NoopStep {
@@ -189,10 +192,28 @@ impl Step for NoopStep {
     }
 }
 
-fn build_plan(partition_strategy: PartitionKeyStrategy) -> ScenarioExecutionPlan {
+#[async_trait]
+impl Step for AlwaysFailStep {
+    fn name(&self) -> &str {
+        "always_fail"
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &mut ScenarioContext,
+        _ports: &StepPorts,
+    ) -> Result<(), PulseError> {
+        Err(PulseError::Client("forced failure".to_string()))
+    }
+}
+
+fn build_plan_with_step(
+    step: Arc<dyn Step>,
+    partition_strategy: PartitionKeyStrategy,
+) -> ScenarioExecutionPlan {
     let scenario = Scenario::new(
         "IntegrationScenario",
-        vec![Arc::new(NoopStep) as Arc<dyn Step>],
+        vec![step],
         ScenarioConfig {
             endpoint: "http://127.0.0.1:8080".to_string(),
             scenarios_per_sec: 5.0,
@@ -211,6 +232,10 @@ fn build_plan(partition_strategy: PartitionKeyStrategy) -> ScenarioExecutionPlan
     ScenarioExecutionPlan { scenario, ports }
 }
 
+fn build_plan(partition_strategy: PartitionKeyStrategy) -> ScenarioExecutionPlan {
+    build_plan_with_step(Arc::new(NoopStep), partition_strategy)
+}
+
 #[tokio::test]
 async fn end_to_end_pipeline_publishes_success_result() {
     let (tx, rx) = mpsc::unbounded_channel();
@@ -222,7 +247,7 @@ async fn end_to_end_pipeline_publishes_success_result() {
     let consumer = Arc::new(InMemoryJobConsumer::new(rx));
     let idempotency = Arc::new(InMemoryIdempotencyStore::default());
     let result_publisher = Arc::new(InMemoryResultPublisher::default());
-    let dlq_publisher = Arc::new(InMemoryDlqPublisher);
+    let dlq_publisher = Arc::new(InMemoryDlqPublisher::default());
 
     let node = PulseNode::new(
         PulseNodeDependencies {
@@ -291,7 +316,7 @@ async fn duplicate_jobs_are_deduplicated_by_idempotency_store() {
     let consumer = Arc::new(InMemoryJobConsumer::new(rx));
     let idempotency = Arc::new(InMemoryIdempotencyStore::default());
     let result_publisher = Arc::new(InMemoryResultPublisher::default());
-    let dlq_publisher = Arc::new(InMemoryDlqPublisher);
+    let dlq_publisher = Arc::new(InMemoryDlqPublisher::default());
 
     let node = PulseNode::new(
         PulseNodeDependencies {
@@ -338,6 +363,102 @@ async fn duplicate_jobs_are_deduplicated_by_idempotency_store() {
         commit_counter.load(Ordering::SeqCst),
         2,
         "both messages should be committed even if one is deduplicated"
+    );
+
+    let _ = shutdown_tx.send(true);
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn failed_jobs_are_retried_and_sent_to_dlq() {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let commit_counter = Arc::new(AtomicUsize::new(0));
+
+    let elector = Arc::new(NoopLeaderElector);
+    let due_store = Arc::new(OnceDueStateStore::default());
+    let publisher = Arc::new(InMemoryJobPublisher::new(tx, false, commit_counter.clone()));
+    let consumer = Arc::new(InMemoryJobConsumer::new(rx));
+    let idempotency = Arc::new(InMemoryIdempotencyStore::default());
+    let result_publisher = Arc::new(InMemoryResultPublisher::default());
+    let dlq_publisher = Arc::new(InMemoryDlqPublisher::default());
+
+    let node = PulseNode::new(
+        PulseNodeDependencies {
+            elector,
+            due_store,
+            job_publisher: publisher.clone(),
+            job_consumer: consumer,
+            idempotency_store: idempotency,
+            result_publisher: result_publisher.clone(),
+            dlq_publisher: dlq_publisher.clone(),
+        },
+        vec![build_plan_with_step(
+            Arc::new(AlwaysFailStep),
+            PartitionKeyStrategy::ExecutionKey,
+        )],
+        NodeRuntimeConfig {
+            leader_renew_interval: Duration::from_millis(10),
+            scheduler_tick_interval: Duration::from_millis(10),
+            worker_max_retries: 2,
+            worker_retry_base_delay: Duration::from_millis(5),
+        },
+    );
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let handle = tokio::spawn(node.run(shutdown_rx));
+
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if dlq_publisher.failed_jobs.lock().await.len() == 1 {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for dlq publication");
+
+    sleep(Duration::from_millis(100)).await;
+
+    let results = result_publisher.results.lock().await.clone();
+    assert_eq!(
+        results.len(),
+        3,
+        "initial run plus two retries should each publish a failed result"
+    );
+    assert!(
+        results
+            .iter()
+            .all(|result| matches!(result.status, ScenarioRunStatus::Failed)),
+        "all attempts should fail for always-fail scenario"
+    );
+
+    let published_attempts: Vec<u32> = publisher
+        .published_jobs
+        .lock()
+        .await
+        .iter()
+        .map(|job| job.attempt)
+        .collect();
+    assert_eq!(
+        published_attempts,
+        vec![0, 1, 2],
+        "worker should publish retry attempts up to max_retries"
+    );
+
+    let failed_jobs = dlq_publisher.failed_jobs.lock().await.clone();
+    assert_eq!(
+        failed_jobs.len(),
+        1,
+        "job should be moved to dlq exactly once after retries are exhausted"
+    );
+    assert_eq!(failed_jobs[0].attempt, 2);
+    assert_eq!(failed_jobs[0].max_retries, 2);
+
+    assert_eq!(
+        commit_counter.load(Ordering::SeqCst),
+        3,
+        "all consumed attempts should be committed"
     );
 
     let _ = shutdown_tx.send(true);

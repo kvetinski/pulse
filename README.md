@@ -321,6 +321,8 @@ Grafana sample dashboard:
 make fmt
 make check
 cargo test
+make bench
+make ci-check
 ```
 
 Docker-backed integration tests (Redis + Kafka):
