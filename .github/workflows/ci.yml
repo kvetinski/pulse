@@ -45,6 +45,14 @@ jobs:
       - name: Run quality gates
         run: make ci-check
 
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+
+      - name: Validate Kubernetes manifests
+        run: kubectl kustomize k8s > /dev/null
+
   integration-compose:
     name: Integration (Kafka + Redis via Compose)
     runs-on: ubuntu-latest

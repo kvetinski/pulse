@@ -68,6 +68,7 @@ Runtime flow:
 - `k8s/examples/pdb-pulse.yaml`: sample stricter PDB (`minAvailable: 2`).
 - `k8s/*.yaml`: Kubernetes manifests.
 - `docs/architecture-decisions.md`: runtime architecture decisions and tradeoffs.
+- `docs/benchmarks.md`: measured benchmark results (environment, throughput, latency, error, resource snapshot).
 - `docs/operational-safety.md`: shutdown, retry, DLQ, and queue safety behavior.
 - `docs/testing-plan.md`: test strategy.
 - `docs/rollout-plan.md`: staged rollout plan.

@@ -45,14 +45,19 @@ fmt: ## Run cargo fmt
 clippy: ## Run cargo clippy with warnings as errors
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
-bench: ## Run benchmark binary (override env: PULSE_BENCH_* iterations)
+bench: ## Run benchmark binary (override env: PULSE_BENCH_* iterations/thresholds)
 	$(CARGO) run --release --bin pulse_bench
 
 ci-check: ## Full local quality gates used in CI
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --locked --all-targets --all-features -- -D warnings
 	$(CARGO) test --locked --all-targets --all-features
-	PULSE_BENCH_TOKEN_BUCKET_ITERATIONS=200 PULSE_BENCH_RUNNER_ITERATIONS=5 $(CARGO) run --locked --release --bin pulse_bench
+	PULSE_BENCH_TOKEN_BUCKET_ITERATIONS=200 \
+	PULSE_BENCH_RUNNER_ITERATIONS=5 \
+	PULSE_BENCH_MIN_STARTED_PER_SEC=120 \
+	PULSE_BENCH_MAX_AVG_RUN_MS=200 \
+	PULSE_BENCH_MAX_DROP_RATIO=0 \
+	$(CARGO) run --locked --release --bin pulse_bench
 	docker compose config -q
 	$(MAKE) proto-descriptor
 

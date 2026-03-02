@@ -34,6 +34,13 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn env_f64(name: &str, default: f64) -> f64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .unwrap_or(default)
+}
+
 fn scenarios_per_sec(total: u64, elapsed: Duration) -> f64 {
     total as f64 / elapsed.as_secs_f64().max(0.001)
 }
@@ -94,6 +101,9 @@ async fn run_runner_benchmark(iterations: u64) -> (Duration, u64, u64) {
 async fn main() {
     let token_bucket_iterations = env_u64("PULSE_BENCH_TOKEN_BUCKET_ITERATIONS", 500);
     let runner_iterations = env_u64("PULSE_BENCH_RUNNER_ITERATIONS", 10);
+    let min_started_per_sec = env_f64("PULSE_BENCH_MIN_STARTED_PER_SEC", 120.0);
+    let max_avg_run_ms = env_f64("PULSE_BENCH_MAX_AVG_RUN_MS", 200.0);
+    let max_drop_ratio = env_f64("PULSE_BENCH_MAX_DROP_RATIO", 0.0);
 
     let token_bucket_elapsed = run_token_bucket_benchmark(token_bucket_iterations).await;
     println!(
@@ -104,12 +114,47 @@ async fn main() {
     );
 
     let (runner_elapsed, started, finished) = run_runner_benchmark(runner_iterations).await;
+    let started_per_sec = scenarios_per_sec(started, runner_elapsed);
+    let avg_run_ms = (runner_elapsed.as_secs_f64() * 1000.0) / (runner_iterations.max(1) as f64);
+    let drop_ratio = if started == 0 {
+        1.0
+    } else {
+        1.0 - (finished as f64 / started as f64)
+    };
+
     println!(
         "runner_noop: runs={} elapsed_ms={} started={} finished={} started_per_sec={:.2}",
         runner_iterations,
         runner_elapsed.as_millis(),
         started,
         finished,
-        scenarios_per_sec(started, runner_elapsed)
+        started_per_sec
+    );
+
+    if started_per_sec < min_started_per_sec {
+        eprintln!(
+            "benchmark regression: started_per_sec {:.2} < min {:.2}",
+            started_per_sec, min_started_per_sec
+        );
+        std::process::exit(1);
+    }
+    if avg_run_ms > max_avg_run_ms {
+        eprintln!(
+            "benchmark regression: avg_run_ms {:.2} > max {:.2}",
+            avg_run_ms, max_avg_run_ms
+        );
+        std::process::exit(1);
+    }
+    if drop_ratio > max_drop_ratio {
+        eprintln!(
+            "benchmark regression: drop_ratio {:.6} > max {:.6}",
+            drop_ratio, max_drop_ratio
+        );
+        std::process::exit(1);
+    }
+
+    println!(
+        "bench_thresholds: PASS min_started_per_sec={:.2} max_avg_run_ms={:.2} max_drop_ratio={:.6}",
+        min_started_per_sec, max_avg_run_ms, max_drop_ratio
     );
 }
