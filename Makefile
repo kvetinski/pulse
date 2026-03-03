@@ -25,7 +25,7 @@ PROTO_FILES ?= src/account.proto
 TEST_KAFKA_BROKERS ?= 127.0.0.1:19092
 TEST_REDIS_URL ?= redis://127.0.0.1:16379
 
-.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-fix-metrics-server
+.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-fix-metrics-server
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-24s %s\n", $$1, $$2}'
@@ -173,6 +173,12 @@ k8s-apply-hpa-example: ## Apply sample HPA (requires metrics-server)
 
 k8s-apply-pdb-example: ## Apply sample stricter PDB (minAvailable=2)
 	kubectl --context $(KUBE_CONTEXT) apply -f k8s/examples/pdb-pulse.yaml
+
+k8s-apply-networkpolicy-example: ## Apply sample NetworkPolicy for pulse runtime traffic
+	kubectl --context $(KUBE_CONTEXT) apply -f k8s/examples/networkpolicy-pulse.yaml
+
+k8s-show-digest-pinning-example: ## Show image digest pinning snippet for kustomization.yaml
+	cat k8s/examples/image-digests.example.yaml
 
 k8s-fix-metrics-server: ## Patch kube-system metrics-server for kind kubelet TLS and verify metrics API
 	kubectl --context $(KUBE_CONTEXT) -n kube-system patch deployment metrics-server --type='strategic' -p '{"spec":{"template":{"spec":{"containers":[{"name":"metrics-server","args":["--cert-dir=/tmp","--secure-port=10250","--kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP","--kubelet-use-node-status-port","--metric-resolution=15s","--kubelet-insecure-tls"]}]}}}}'

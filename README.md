@@ -66,6 +66,9 @@ Runtime flow:
 - `k8s/dashboards/pulse-runtime-dashboard.json`: dashboard bundled for in-cluster Grafana.
 - `k8s/examples/hpa-pulse.yaml`: sample HPA for pulse deployment.
 - `k8s/examples/pdb-pulse.yaml`: sample stricter PDB (`minAvailable: 2`).
+- `k8s/examples/networkpolicy-pulse.yaml`: sample NetworkPolicy for pulse pod traffic.
+- `k8s/examples/pulse-secret.example.yaml`: example Kubernetes secret for sensitive runtime values.
+- `k8s/examples/image-digests.example.yaml`: digest pinning snippet (`image@sha256`) for kustomization.
 - `k8s/*.yaml`: Kubernetes manifests.
 - `docs/architecture-decisions.md`: runtime architecture decisions and tradeoffs.
 - `docs/benchmarks.md`: measured benchmark results (environment, throughput, latency, error, resource snapshot).
@@ -244,6 +247,10 @@ Notes:
 - Example target endpoint is cross-namespace to Account service: `http://account.account:8080`.
 - Deployment exposes `/metrics` on port `9090` through `Service/pulse`.
 - Pulse workloads run as non-root and include startup/readiness/liveness probes.
+- Secret-based sensitive config path is supported:
+  - `Secret/pulse-secrets` is mounted to `/var/run/secrets/pulse` (optional).
+  - `PULSE_REDIS_URL_FILE=/var/run/secrets/pulse/PULSE_REDIS_URL` is set in deployment.
+  - If `PULSE_REDIS_URL` is not set, Pulse reads Redis URL from that file path.
 - `make k8s-deploy` applies `k8s/kustomization.yaml` and provisions a dedicated observability stack in `pulse` namespace:
   - `Deployment/Service prometheus` using `k8s/prometheus.yaml`.
   - `Deployment/Service grafana` using `k8s/grafana.yaml`.
@@ -251,12 +258,28 @@ Notes:
 - Optional hardening examples:
   - `make k8s-apply-hpa-example` to apply `k8s/examples/hpa-pulse.yaml` (requires metrics-server).
   - `make k8s-apply-pdb-example` to apply stricter disruption policy (`minAvailable: 2`).
+  - `make k8s-apply-networkpolicy-example` to apply runtime traffic policy for pulse pods.
+  - `make k8s-show-digest-pinning-example` to print digest pinning snippet for `k8s/kustomization.yaml`.
 
 Access examples:
 
 ```bash
 kubectl --context kind-account -n pulse port-forward svc/prometheus 9090:9090
 kubectl --context kind-account -n pulse port-forward svc/grafana 3001:3000
+```
+
+Provision `pulse-secrets` example:
+
+```bash
+kubectl --context kind-account -n pulse create secret generic pulse-secrets \
+  --from-literal=PULSE_REDIS_URL='redis://:change-me@redis:6379' \
+  --dry-run=client -o yaml | kubectl --context kind-account apply -f -
+```
+
+Show digest-pinning snippet (`image@sha256`) and copy into `k8s/kustomization.yaml`:
+
+```bash
+make k8s-show-digest-pinning-example
 ```
 
 If metrics-server is not healthy on kind:
@@ -291,6 +314,7 @@ Primary environment variables:
 - `PULSE_KAFKA_DLQ_TOPIC` (default: `pulse.scenario.dlq`)
 - `PULSE_KAFKA_GROUP_ID` (default: `pulse-workers`)
 - `PULSE_REDIS_URL` (default: `redis://127.0.0.1:6379`)
+- `PULSE_REDIS_URL_FILE` (optional file path fallback for `PULSE_REDIS_URL`)
 - `PULSE_REDIS_LEADER_KEY` (default: `pulse:leader`)
 - `PULSE_REDIS_SCHEDULE_PREFIX` (default: `pulse:schedule`)
 - `PULSE_REDIS_IDEMPOTENCY_PREFIX` (default: `pulse:dedupe`)

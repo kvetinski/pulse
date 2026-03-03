@@ -1,0 +1,18 @@
+# Example snippet for digest pinning.
+# Copy this `images` block into `k8s/kustomization.yaml` for production/staging.
+images:
+  - name: pulse
+    newName: ghcr.io/your-org/pulse
+    digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  - name: apache/kafka
+    newName: apache/kafka
+    digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  - name: redis
+    newName: redis
+    digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  - name: prom/prometheus
+    newName: prom/prometheus
+    digest: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  - name: grafana/grafana
+    newName: grafana/grafana
+    digest: sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee

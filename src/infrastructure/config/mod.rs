@@ -33,7 +33,7 @@ impl AppConfig {
             kafka_results_topic: env_or("PULSE_KAFKA_RESULTS_TOPIC", "pulse.scenario.results"),
             kafka_dlq_topic: env_or("PULSE_KAFKA_DLQ_TOPIC", "pulse.scenario.dlq"),
             kafka_group_id: env_or("PULSE_KAFKA_GROUP_ID", "pulse-workers"),
-            redis_url: env_or("PULSE_REDIS_URL", "redis://127.0.0.1:6379"),
+            redis_url: env_or_with_file("PULSE_REDIS_URL", "redis://127.0.0.1:6379"),
             redis_leader_key: env_or("PULSE_REDIS_LEADER_KEY", "pulse:leader"),
             redis_schedule_prefix: env_or("PULSE_REDIS_SCHEDULE_PREFIX", "pulse:schedule"),
             redis_idempotency_prefix: env_or("PULSE_REDIS_IDEMPOTENCY_PREFIX", "pulse:dedupe"),
@@ -64,6 +64,30 @@ impl AppConfig {
 
 fn env_or(name: &str, default: impl Into<String>) -> String {
     std::env::var(name).unwrap_or_else(|_| default.into())
+}
+
+fn env_or_with_file(name: &str, default: impl Into<String>) -> String {
+    if let Ok(value) = std::env::var(name) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    let file_key = format!("{name}_FILE");
+    if let Ok(path) = std::env::var(file_key) {
+        let trimmed_path = path.trim();
+        if !trimmed_path.is_empty()
+            && let Ok(file_value) = std::fs::read_to_string(trimmed_path)
+        {
+            let trimmed_value = file_value.trim();
+            if !trimmed_value.is_empty() {
+                return trimmed_value.to_string();
+            }
+        }
+    }
+
+    default.into()
 }
 
 fn env_or_parse<T: std::str::FromStr>(name: &str, default: T) -> T {

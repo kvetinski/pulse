@@ -19,6 +19,8 @@ spec:
         prometheus.io/path: "/metrics"
         prometheus.io/port: "9090"
     spec:
+      serviceAccountName: pulse-runtime
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 15
       securityContext:
         runAsNonRoot: true
@@ -39,6 +41,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: pulse-secrets
+              mountPath: /var/run/secrets/pulse
+              readOnly: true
           ports:
             - containerPort: 9090
               name: metrics
@@ -71,6 +76,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: PULSE_REDIS_URL_FILE
+              value: /var/run/secrets/pulse/PULSE_REDIS_URL
           resources:
             requests:
               cpu: "100m"
@@ -81,3 +88,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: pulse-secrets
+          secret:
+            secretName: pulse-secrets
+            optional: true

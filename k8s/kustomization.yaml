@@ -3,6 +3,8 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - serviceaccount.yaml
+  - rbac.yaml
   - redis.yaml
   - kafka.yaml
   - prometheus.yaml
