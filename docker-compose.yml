@@ -56,7 +56,7 @@ services:
     environment:
       RUST_LOG: ${RUST_LOG:-info}
       PULSE_ENDPOINT: ${PULSE_ENDPOINT:-http://host.docker.internal:8080}
-      # Compose scenario config (k8s uses /app/scenarios.k8s.yaml).
+      # Compose scenario config (k8s overlays use /app/scenarios.<env>.yaml).
       PULSE_SCENARIOS_FILE: ${PULSE_SCENARIOS_FILE:-/app/scenarios.yaml}
       PULSE_GRPC_DESCRIPTOR_SET: ${PULSE_GRPC_DESCRIPTOR_SET:-/app/descriptors/services.pb}
       PULSE_KAFKA_BROKERS: ${PULSE_KAFKA_BROKERS:-kafka:9092}

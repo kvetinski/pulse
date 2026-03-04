@@ -5,9 +5,10 @@ metadata:
   namespace: pulse
 data:
   RUST_LOG: "info"
-  # Cross-namespace DNS to account service.
-  PULSE_ENDPOINT: "http://account.account:8080"
-  PULSE_SCENARIOS_FILE: "/app/scenarios.k8s.yaml"
+  # Overlay-specific endpoint patch is required for each environment.
+  PULSE_ENDPOINT: "http://replace-me:8080"
+  # Overlay-specific scenarios file should override this path.
+  PULSE_SCENARIOS_FILE: "/app/scenarios.yaml"
   PULSE_GRPC_DESCRIPTOR_SET: "/app/descriptors/services.pb"
   PULSE_KAFKA_BROKERS: "kafka:9092"
   PULSE_KAFKA_JOBS_TOPIC: "pulse.scenario.jobs"

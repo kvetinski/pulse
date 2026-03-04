@@ -3,8 +3,19 @@ SHELL := /bin/bash
 CARGO ?= cargo
 PROTOC ?= protoc
 RUST_LOG ?= info
-KUBE_CONTEXT ?= kind-account
-KUBE_NAMESPACE ?= pulse
+K8S_OVERLAY ?= kind
+K8S_OVERLAY_DIR ?= k8s/overlays/$(K8S_OVERLAY)
+K8S_KIND_CONTEXT ?= kind-account
+K8S_STAGING_CONTEXT ?= kind-account
+K8S_PROD_CONTEXT ?= kind-account
+K8S_KIND_NAMESPACE ?= pulse-dev
+K8S_STAGING_NAMESPACE ?= pulse-staging
+K8S_PROD_NAMESPACE ?= pulse-prod
+EXPECTED_KUBE_CONTEXT = $(if $(filter kind,$(K8S_OVERLAY)),$(K8S_KIND_CONTEXT),$(if $(filter staging,$(K8S_OVERLAY)),$(K8S_STAGING_CONTEXT),$(if $(filter prod,$(K8S_OVERLAY)),$(K8S_PROD_CONTEXT),invalid)))
+EXPECTED_KUBE_NAMESPACE = $(if $(filter kind,$(K8S_OVERLAY)),$(K8S_KIND_NAMESPACE),$(if $(filter staging,$(K8S_OVERLAY)),$(K8S_STAGING_NAMESPACE),$(if $(filter prod,$(K8S_OVERLAY)),$(K8S_PROD_NAMESPACE),invalid)))
+KUBE_CONTEXT ?= $(EXPECTED_KUBE_CONTEXT)
+KUBE_NAMESPACE ?= $(EXPECTED_KUBE_NAMESPACE)
+ALLOW_K8S_ENV_OVERRIDE ?= false
 KIND_CLUSTER ?= account
 # `kind` CLI expects cluster name (e.g. `account`), not context (`kind-account`).
 KIND_CLUSTER_NAME ?= $(if $(filter kind-%,$(KUBE_CONTEXT)),$(patsubst kind-%,%,$(KUBE_CONTEXT)),$(KIND_CLUSTER))
@@ -24,8 +35,10 @@ PROTO_IMPORT_DIRS ?= /usr/include
 PROTO_FILES ?= src/account.proto
 TEST_KAFKA_BROKERS ?= 127.0.0.1:19092
 TEST_REDIS_URL ?= redis://127.0.0.1:16379
+PROMETHEUS_RULE_FILE ?= k8s/examples/alerts/pulse-prometheusrule.$(K8S_OVERLAY).yaml
+SECRET_EXAMPLE_FILE ?= k8s/examples/secrets/pulse-secret.$(K8S_OVERLAY).example.yaml
 
-.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-fix-metrics-server
+.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-guard-overlay k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-show-secret-example k8s-apply-secret-example k8s-apply-prometheusrule k8s-delete-prometheusrule k8s-fix-metrics-server
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-24s %s\n", $$1, $$2}'
@@ -127,15 +140,31 @@ kind-load-deps: ## Load kafka/redis images into kind cluster
 	kind load docker-image $(PROMETHEUS_IMAGE) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(GRAFANA_IMAGE) --name $(KIND_CLUSTER_NAME)
 
-k8s-deploy-kind: ## Build + load local kind image, then deploy using it
+k8s-deploy-kind: ## Build + load local kind image, then deploy using kind overlay
 	$(MAKE) kind-build LOCAL_IMAGE=$(LOCAL_IMAGE)
 	$(MAKE) kind-load-deps KAFKA_IMAGE=$(KAFKA_IMAGE) REDIS_IMAGE=$(REDIS_IMAGE) PROMETHEUS_IMAGE=$(PROMETHEUS_IMAGE) GRAFANA_IMAGE=$(GRAFANA_IMAGE) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME)
 	$(MAKE) kind-load LOCAL_IMAGE=$(LOCAL_IMAGE) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME)
-	$(MAKE) k8s-deploy KUBE_CONTEXT=$(KUBE_CONTEXT) KUBE_NAMESPACE=$(KUBE_NAMESPACE)
+	$(MAKE) k8s-deploy K8S_OVERLAY=kind
 
-k8s-deploy: ## Deploy pulse to Kubernetes from k8s/kustomization.yaml
+k8s-guard-overlay: ## Validate overlay/context/namespace alignment before kubectl operations
+	@if [ "$(EXPECTED_KUBE_CONTEXT)" = "invalid" ] || [ "$(EXPECTED_KUBE_NAMESPACE)" = "invalid" ]; then \
+		echo "invalid K8S_OVERLAY='$(K8S_OVERLAY)' (expected: kind|staging|prod)"; \
+		exit 1; \
+	fi
+	@if [ "$(ALLOW_K8S_ENV_OVERRIDE)" != "true" ] && [ "$(KUBE_CONTEXT)" != "$(EXPECTED_KUBE_CONTEXT)" ]; then \
+		echo "KUBE_CONTEXT='$(KUBE_CONTEXT)' does not match overlay default '$(EXPECTED_KUBE_CONTEXT)' for K8S_OVERLAY='$(K8S_OVERLAY)'."; \
+		echo "Use ALLOW_K8S_ENV_OVERRIDE=true only if this is intentional."; \
+		exit 1; \
+	fi
+	@if [ "$(ALLOW_K8S_ENV_OVERRIDE)" != "true" ] && [ "$(KUBE_NAMESPACE)" != "$(EXPECTED_KUBE_NAMESPACE)" ]; then \
+		echo "KUBE_NAMESPACE='$(KUBE_NAMESPACE)' does not match overlay default '$(EXPECTED_KUBE_NAMESPACE)' for K8S_OVERLAY='$(K8S_OVERLAY)'."; \
+		echo "Use ALLOW_K8S_ENV_OVERRIDE=true only if this is intentional."; \
+		exit 1; \
+	fi
+
+k8s-deploy: k8s-guard-overlay ## Deploy pulse to Kubernetes from selected overlay (K8S_OVERLAY=kind|staging|prod)
 	kubectl --context $(KUBE_CONTEXT) create namespace $(KUBE_NAMESPACE) --dry-run=client -o yaml | kubectl --context $(KUBE_CONTEXT) apply -f -
-	kubectl --context $(KUBE_CONTEXT) apply -k k8s
+	kubectl --context $(KUBE_CONTEXT) apply -k $(K8S_OVERLAY_DIR)
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/prometheus
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/grafana
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/redis
@@ -146,39 +175,64 @@ k8s-deploy-push: ## Build + push image, then deploy (requires REGISTRY)
 	@if [ -z "$(REGISTRY)" ]; then echo "REGISTRY is required for k8s-deploy-push"; exit 1; fi
 	$(MAKE) docker-build-image REGISTRY=$(REGISTRY) IMAGE_REPO=$(IMAGE_REPO) IMAGE_TAG=$(IMAGE_TAG)
 	$(MAKE) docker-push REGISTRY=$(REGISTRY) IMAGE_REPO=$(IMAGE_REPO) IMAGE_TAG=$(IMAGE_TAG)
-	$(MAKE) k8s-deploy KUBE_CONTEXT=$(KUBE_CONTEXT) KUBE_NAMESPACE=$(KUBE_NAMESPACE)
+	$(MAKE) k8s-deploy KUBE_CONTEXT=$(KUBE_CONTEXT) KUBE_NAMESPACE=$(KUBE_NAMESPACE) K8S_OVERLAY=$(K8S_OVERLAY)
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) set image deployment/pulse pulse=$(IMAGE)
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/pulse
 
-k8s-delete: ## Remove pulse resources from Kubernetes
-	kubectl --context $(KUBE_CONTEXT) delete -k k8s --ignore-not-found=true
+k8s-delete: k8s-guard-overlay ## Remove pulse resources from Kubernetes
+	kubectl --context $(KUBE_CONTEXT) delete -k $(K8S_OVERLAY_DIR) --ignore-not-found=true
 
-k8s-logs: ## Tail pulse pod logs from Kubernetes
+k8s-logs: k8s-guard-overlay ## Tail pulse pod logs from Kubernetes
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) logs -f deployment/pulse
 
-k8s-status: ## Show pulse deployment and pod status
+k8s-status: k8s-guard-overlay ## Show pulse deployment and pod status
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) get deploy,pod -l app=pulse -o wide
 
-k8s-leader-key: ## Show current redis leader key value (requires redis pod/service name 'redis')
+k8s-leader-key: k8s-guard-overlay ## Show current redis leader key value (requires redis pod/service name 'redis')
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) exec deploy/redis -- redis-cli GET pulse:leader
 
-k8s-kafka-topics: ## List kafka topics (requires kafka deployment name 'kafka')
+k8s-kafka-topics: k8s-guard-overlay ## List kafka topics (requires kafka deployment name 'kafka')
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
 
-k8s-pf-grafana: ## Port-forward Grafana UI to localhost:3001
+k8s-pf-grafana: k8s-guard-overlay ## Port-forward Grafana UI to localhost:3001
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) port-forward svc/grafana 3001:3000
 
-k8s-apply-hpa-example: ## Apply sample HPA (requires metrics-server)
-	kubectl --context $(KUBE_CONTEXT) apply -f k8s/examples/hpa-pulse.yaml
+k8s-apply-hpa-example: k8s-guard-overlay ## Apply sample HPA (requires metrics-server)
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) apply -f k8s/examples/hpa-pulse.yaml
 
-k8s-apply-pdb-example: ## Apply sample stricter PDB (minAvailable=2)
-	kubectl --context $(KUBE_CONTEXT) apply -f k8s/examples/pdb-pulse.yaml
+k8s-apply-pdb-example: k8s-guard-overlay ## Apply sample stricter PDB (minAvailable=2)
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) apply -f k8s/examples/pdb-pulse.yaml
 
-k8s-apply-networkpolicy-example: ## Apply sample NetworkPolicy for pulse runtime traffic
-	kubectl --context $(KUBE_CONTEXT) apply -f k8s/examples/networkpolicy-pulse.yaml
+k8s-apply-networkpolicy-example: k8s-guard-overlay ## Apply sample NetworkPolicy for pulse runtime traffic
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) apply -f k8s/examples/networkpolicy-pulse.yaml
 
 k8s-show-digest-pinning-example: ## Show image digest pinning snippet for kustomization.yaml
 	cat k8s/examples/image-digests.example.yaml
+
+k8s-show-secret-example: k8s-guard-overlay ## Show per-overlay pulse secret example manifest
+	@if [ ! -f "$(SECRET_EXAMPLE_FILE)" ]; then echo "missing secret example file: $(SECRET_EXAMPLE_FILE)"; exit 1; fi
+	cat $(SECRET_EXAMPLE_FILE)
+
+k8s-apply-secret-example: k8s-guard-overlay ## Apply per-overlay pulse secret example manifest
+	@if [ ! -f "$(SECRET_EXAMPLE_FILE)" ]; then echo "missing secret example file: $(SECRET_EXAMPLE_FILE)"; exit 1; fi
+	kubectl --context $(KUBE_CONTEXT) apply -f $(SECRET_EXAMPLE_FILE)
+
+k8s-apply-prometheusrule: k8s-guard-overlay ## Apply per-overlay PrometheusRule alerts (requires Prometheus Operator CRD)
+	@if [ ! -f "$(PROMETHEUS_RULE_FILE)" ]; then echo "missing PrometheusRule file: $(PROMETHEUS_RULE_FILE)"; exit 1; fi
+	@if ! kubectl --context $(KUBE_CONTEXT) get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then \
+		echo "CRD prometheusrules.monitoring.coreos.com is not installed in cluster $(KUBE_CONTEXT)."; \
+		echo "Install Prometheus Operator/kube-prometheus-stack first."; \
+		exit 1; \
+	fi
+	kubectl --context $(KUBE_CONTEXT) apply -f $(PROMETHEUS_RULE_FILE)
+
+k8s-delete-prometheusrule: k8s-guard-overlay ## Delete per-overlay PrometheusRule alerts
+	@if [ ! -f "$(PROMETHEUS_RULE_FILE)" ]; then echo "missing PrometheusRule file: $(PROMETHEUS_RULE_FILE)"; exit 1; fi
+	@if ! kubectl --context $(KUBE_CONTEXT) get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then \
+		echo "CRD prometheusrules.monitoring.coreos.com is not installed in cluster $(KUBE_CONTEXT)."; \
+		exit 1; \
+	fi
+	kubectl --context $(KUBE_CONTEXT) delete -f $(PROMETHEUS_RULE_FILE) --ignore-not-found=true
 
 k8s-fix-metrics-server: ## Patch kube-system metrics-server for kind kubelet TLS and verify metrics API
 	kubectl --context $(KUBE_CONTEXT) -n kube-system patch deployment metrics-server --type='strategic' -p '{"spec":{"template":{"spec":{"containers":[{"name":"metrics-server","args":["--cert-dir=/tmp","--secure-port=10250","--kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP","--kubelet-use-node-status-port","--metric-resolution=15s","--kubelet-insecure-tls"]}]}}}}'

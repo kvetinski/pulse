@@ -1,0 +1,101 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pulse-runtime-alerts
+  namespace: pulse-dev
+  labels:
+    app: pulse
+    release: prometheus
+spec:
+  groups:
+    - name: pulse-runtime-availability
+      rules:
+        - alert: PulseNoSchedulerLeader
+          expr: max(pulse_scheduler_is_leader) < 1
+          for: 5m
+          labels:
+            severity: critical
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse scheduler leader is missing"
+            description: "No pulse leader detected for 5m in namespace pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseHighScenarioFailureRatio
+          expr: |
+            (
+              sum(rate(pulse_scenario_executions_total{status="failure"}[5m]))
+              /
+              clamp_min(sum(rate(pulse_scenario_executions_total[5m])), 1)
+            ) > 0.05
+          for: 10m
+          labels:
+            severity: critical
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse scenario failure ratio is high"
+            description: "Scenario failure ratio has been above 5% for 10m in pulse-dev."
+            runbook: "docs/runbook.md"
+
+    - name: pulse-runtime-performance
+      rules:
+        - alert: PulseScenarioLatencyP95High
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (rate(pulse_scenario_duration_seconds_bucket{status="success"}[10m]))
+            ) > 2
+          for: 15m
+          labels:
+            severity: warning
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse scenario p95 latency is high"
+            description: "Scenario p95 latency has been above 2s for 15m in pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseWorkerConsumeErrorsHigh
+          expr: |
+            (
+              rate(pulse_worker_job_consume_errors_total[5m])
+              /
+              clamp_min(rate(pulse_worker_jobs_received_total[5m]), 1)
+            ) > 0.01
+          for: 10m
+          labels:
+            severity: warning
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse worker consume error ratio is high"
+            description: "Consume errors exceed 1% over 10m in pulse-dev."
+            runbook: "docs/runbook.md"
+
+    - name: pulse-runtime-dlq
+      rules:
+        - alert: PulseDlqActivityDetected
+          expr: sum(rate(pulse_worker_dlq_published_total[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse dead-letter queue activity detected"
+            description: "DLQ publish rate is non-zero for 10m in pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseDlqPublishFailures
+          expr: sum(rate(pulse_worker_dlq_publish_failures_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse dead-letter publish is failing"
+            description: "DLQ publish failures are non-zero for 5m in pulse-dev."
+            runbook: "docs/runbook.md"

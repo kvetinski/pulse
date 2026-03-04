@@ -1,5 +1,6 @@
 # Example snippet for digest pinning.
-# Copy this `images` block into `k8s/kustomization.yaml` for production/staging.
+# Copy this `images` block into `k8s/overlays/staging/kustomization.yaml`
+# or `k8s/overlays/prod/kustomization.yaml`.
 images:
   - name: pulse
     newName: ghcr.io/your-org/pulse

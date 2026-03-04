@@ -2,7 +2,6 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: pulse
-  namespace: pulse
 spec:
   minAvailable: 2
   selector:

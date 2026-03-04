@@ -33,7 +33,9 @@ RUN apt-get update \
 
 COPY --from=builder /app/target/release/pulse /usr/local/bin/pulse
 COPY scenarios.yaml /app/scenarios.yaml
-COPY k8s/scenarios.k8s.yaml /app/scenarios.k8s.yaml
+COPY k8s/overlays/kind/scenarios.kind.yaml /app/scenarios.kind.yaml
+COPY k8s/overlays/staging/scenarios.staging.yaml /app/scenarios.staging.yaml
+COPY k8s/overlays/prod/scenarios.prod.yaml /app/scenarios.prod.yaml
 COPY descriptors /app/descriptors
 
 RUN chown -R 10001:10001 /app /home/pulse

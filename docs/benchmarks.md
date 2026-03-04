@@ -12,14 +12,14 @@ Last updated: 2026-03-02 12:46:08 UTC
 - Kubernetes versions:
   - client: `v1.23.5`
   - server: `v1.29.2`
-- Pulse deployment mode for gRPC scenarios: Kubernetes (`k8s/scenarios.k8s.yaml`)
+- Pulse deployment mode for gRPC scenarios: Kubernetes (`k8s/overlays/kind/scenarios.kind.yaml`)
 
 ## Method
 
 - Source of truth for scenario throughput/latency/error:
   - Prometheus queries over a 1h window.
 - Source of truth for Pulse resource usage:
-  - `kubectl top pods -n pulse -l app=pulse` snapshot.
+  - `kubectl top pods -n pulse-dev -l app=pulse` snapshot.
 - Source of truth for runtime micro-benchmark:
   - `cargo run --release --bin pulse_bench --offline`.
 
@@ -102,7 +102,7 @@ cargo run --release --bin pulse_bench --offline
 Kubernetes metrics snapshot:
 
 ```bash
-kubectl --context kind-account -n pulse top pods -l app=pulse
-kubectl --context kind-account -n pulse exec deploy/prometheus -- \
+kubectl --context kind-account -n pulse-dev top pods -l app=pulse
+kubectl --context kind-account -n pulse-dev exec deploy/prometheus -- \
   sh -lc "wget -qO- 'http://127.0.0.1:9090/api/v1/query?query=sum%20by%20(scenario%2Cstatus)%20(rate(pulse_scenario_executions_total%5B1h%5D))'"
 ```

@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulse
+  namespace: pulse
+spec:
+  replicas: 5
+  template:
+    spec:
+      containers:
+        - name: pulse
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

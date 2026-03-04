@@ -16,26 +16,21 @@ scenarios:
           phone: "${gen.phone}"
         extract:
           user_id: "account.id"
-          created_phone: "account.phone"
 
       - protocol: grpc
         service: account.v1.AccountService
         method: GetAccount
-        endpoint: http://account.account:8080
         request_fields:
           id: "${ctx.user_id}"
-        extract:
-          fetched_id: "account.id"
-          fetched_phone: "account.phone"
 
-  - name: DynamicGrpcGetStaticBase64
+  - name: DynamicGrpcCreateGetDeleteCanary
     endpoint: http://account.account:8080
-    scenarios_per_sec: 20
-    max_concurrency: 20
-    duration: 5s
+    scenarios_per_sec: 1
+    max_concurrency: 5
+    duration: 10s
     repeat:
       type: every
-      interval: 5s
+      interval: 1m
     partition_key_strategy: execution_key
     steps:
       - protocol: grpc
@@ -50,9 +45,6 @@ scenarios:
         method: GetAccount
         request_fields:
           id: "${ctx.user_id}"
-        extract:
-          fetched_id: "account.id"
-          fetched_phone: "account.phone"
       - protocol: grpc
         service: account.v1.AccountService
         method: DeleteAccount

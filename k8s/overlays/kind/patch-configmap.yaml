@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pulse-config
+  namespace: pulse
+data:
+  RUST_LOG: "info"
+  PULSE_ENDPOINT: "http://account.account:8080"
+  PULSE_SCENARIOS_FILE: "/app/scenarios.kind.yaml"

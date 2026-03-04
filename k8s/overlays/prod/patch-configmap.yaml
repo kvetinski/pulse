@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pulse-config
+  namespace: pulse
+data:
+  RUST_LOG: "warn"
+  PULSE_ENDPOINT: "http://account.account.svc.cluster.local:8080"
+  PULSE_SCENARIOS_FILE: "/app/scenarios.prod.yaml"
+  PULSE_QUEUE_CAPACITY: "4096"
+  PULSE_WORKER_MAX_RETRIES: "3"
+  PULSE_WORKER_RETRY_BASE_DELAY_MS: "1000"

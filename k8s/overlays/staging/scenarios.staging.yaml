@@ -1,0 +1,52 @@
+version: 1
+scenarios:
+  - name: StagingGrpcCreateGet
+    endpoint: http://account.account.svc.cluster.local:8080
+    scenarios_per_sec: 2
+    max_concurrency: 10
+    duration: 15s
+    repeat:
+      type: every
+      interval: 2m
+    partition_key_strategy: execution_key
+    steps:
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: CreateAccount
+        request_fields:
+          phone: "${gen.phone}"
+        extract:
+          user_id: "account.id"
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: GetAccount
+        request_fields:
+          id: "${ctx.user_id}"
+
+  - name: StagingGrpcCreateGetDelete
+    endpoint: http://account.account.svc.cluster.local:8080
+    scenarios_per_sec: 1
+    max_concurrency: 5
+    duration: 10s
+    repeat:
+      type: every
+      interval: 1m
+    partition_key_strategy: execution_key
+    steps:
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: CreateAccount
+        request_fields:
+          phone: "${gen.phone}"
+        extract:
+          user_id: "account.id"
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: GetAccount
+        request_fields:
+          id: "${ctx.user_id}"
+      - protocol: grpc
+        service: account.v1.AccountService
+        method: DeleteAccount
+        request_fields:
+          id: "${ctx.user_id}"

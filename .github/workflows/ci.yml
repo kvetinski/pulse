@@ -51,7 +51,12 @@ jobs:
           version: v1.31.0
 
       - name: Validate Kubernetes manifests
-        run: kubectl kustomize k8s > /dev/null
+        run: |
+          kubectl kustomize k8s > /dev/null
+          kubectl kustomize k8s/overlays/kind > /dev/null
+          kubectl kustomize k8s/overlays/staging > /dev/null
+          kubectl kustomize k8s/overlays/prod > /dev/null
+          kubectl kustomize k8s/examples/alerts > /dev/null
 
   integration-compose:
     name: Integration (Kafka + Redis via Compose)
