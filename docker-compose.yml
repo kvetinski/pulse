@@ -94,6 +94,7 @@ services:
       - "19091:9090"
     volumes:
       - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
 
   grafana:
     image: grafana/grafana:11.2.2
@@ -110,6 +111,7 @@ services:
     volumes:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
 
 networks:
   default:
@@ -117,3 +119,7 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/16
+
+volumes:
+  prometheus_data:
+  grafana_data:

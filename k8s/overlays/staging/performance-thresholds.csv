@@ -1,0 +1,3 @@
+# scenario,throughput_floor,p95_max_seconds,p99_max_seconds,error_rate_max
+StagingGrpcCreateGet,0.01,0.08,0.25,0.005
+StagingGrpcCreateGetDelete,0.05,0.08,0.25,0.005

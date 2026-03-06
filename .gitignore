@@ -1,3 +1,6 @@
 /target
 descriptors/*.pb
 *.local.md
+artifacts/
+__pycache__/
+*.py[cod]

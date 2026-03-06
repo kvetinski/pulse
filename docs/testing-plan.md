@@ -32,3 +32,7 @@
   - verify balanced work distribution across worker pods
 - Duplicate-prevention behavior:
   - ensure idempotency store suppresses replay execution
+- Soak/chaos workflow:
+  - run `make k8s-soak-chaos` with `SOAK_DURATION_SEC`, `SOAK_SAMPLE_INTERVAL_SEC`, and `SOAK_CHAOS_PLAN`
+  - run `make k8s-check-performance` with `PERF_WINDOW`
+  - evaluate results with `docs/reliability-testing.md` acceptance criteria

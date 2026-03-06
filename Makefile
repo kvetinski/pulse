@@ -37,8 +37,27 @@ TEST_KAFKA_BROKERS ?= 127.0.0.1:19092
 TEST_REDIS_URL ?= redis://127.0.0.1:16379
 PROMETHEUS_RULE_FILE ?= k8s/examples/alerts/pulse-prometheusrule.$(K8S_OVERLAY).yaml
 SECRET_EXAMPLE_FILE ?= k8s/examples/secrets/pulse-secret.$(K8S_OVERLAY).example.yaml
+SOAK_DURATION_SEC ?= 1800
+SOAK_SAMPLE_INTERVAL_SEC ?= 30
+SOAK_CHAOS_PLAN ?= kafka,redis,pulse
+SOAK_REPORT_DIR ?= artifacts/reliability
+PERF_WINDOW ?= 30m
+PERF_THRESHOLD_FILE ?= k8s/overlays/$(K8S_OVERLAY)/performance-thresholds.csv
+PERF_REPORT_DIR ?= artifacts/reliability
+PERF_PROM_DEPLOYMENT ?= prometheus
+PERF_OVERLAY ?= $(K8S_OVERLAY)
+PERF_HISTORY_FILE ?= $(PERF_REPORT_DIR)/perf-history.jsonl
+PERF_REPORT_MAX_POINTS ?= 40
+PERF_GRAFANA_ANNOTATE ?= false
+PERF_GRAFANA_URL ?= http://127.0.0.1:3000
+PERF_GRAFANA_DASHBOARD_UID ?= pulse-runtime-metrics
+PERF_GRAFANA_USER ?= admin
+PERF_GRAFANA_PASSWORD ?= admin
+PERF_GRAFANA_TOKEN ?=
+PERF_GRAFANA_TIMEOUT_SEC ?= 8
+PERF_GRAFANA_VERIFY_TLS ?= true
 
-.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-guard-overlay k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-show-secret-example k8s-apply-secret-example k8s-apply-prometheusrule k8s-delete-prometheusrule k8s-fix-metrics-server
+.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-guard-overlay k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-stop-pods k8s-start-pods k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-show-secret-example k8s-apply-secret-example k8s-apply-prometheusrule k8s-delete-prometheusrule k8s-chaos-restart-kafka k8s-chaos-restart-redis k8s-chaos-restart-pulse k8s-soak-chaos k8s-check-performance k8s-fix-metrics-server
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-24s %s\n", $$1, $$2}'
@@ -182,6 +201,15 @@ k8s-deploy-push: ## Build + push image, then deploy (requires REGISTRY)
 k8s-delete: k8s-guard-overlay ## Remove pulse resources from Kubernetes
 	kubectl --context $(KUBE_CONTEXT) delete -k $(K8S_OVERLAY_DIR) --ignore-not-found=true
 
+k8s-stop-pods: k8s-guard-overlay ## Stop all pods in namespace by scaling deployments/statefulsets to 0 (PVC data is preserved)
+	@set -e; \
+	echo "stopping workloads in namespace $(KUBE_NAMESPACE) on context $(KUBE_CONTEXT)"; \
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) get deployment -o name | xargs -r -n1 kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) scale --replicas=0; \
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) get statefulset -o name | xargs -r -n1 kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) scale --replicas=0; \
+	echo "all scalable workloads are stopped; PVC-backed data is unchanged"
+
+k8s-start-pods: k8s-deploy ## Restore workloads in namespace to overlay-defined replica counts
+
 k8s-logs: k8s-guard-overlay ## Tail pulse pod logs from Kubernetes
 	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) logs -f deployment/pulse
 
@@ -233,6 +261,47 @@ k8s-delete-prometheusrule: k8s-guard-overlay ## Delete per-overlay PrometheusRul
 		exit 1; \
 	fi
 	kubectl --context $(KUBE_CONTEXT) delete -f $(PROMETHEUS_RULE_FILE) --ignore-not-found=true
+
+k8s-chaos-restart-kafka: k8s-guard-overlay ## Restart Kafka deployment and wait for rollout
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout restart deployment/kafka
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/kafka --timeout=300s
+
+k8s-chaos-restart-redis: k8s-guard-overlay ## Restart Redis deployment and wait for rollout
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout restart deployment/redis
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/redis --timeout=300s
+
+k8s-chaos-restart-pulse: k8s-guard-overlay ## Restart Pulse deployment and wait for rollout
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout restart deployment/pulse
+	kubectl --context $(KUBE_CONTEXT) -n $(KUBE_NAMESPACE) rollout status deployment/pulse --timeout=300s
+
+k8s-soak-chaos: k8s-guard-overlay ## Run soak test with planned chaos restarts (SOAK_DURATION_SEC/SOAK_SAMPLE_INTERVAL_SEC/SOAK_CHAOS_PLAN)
+	KUBE_CONTEXT=$(KUBE_CONTEXT) \
+	KUBE_NAMESPACE=$(KUBE_NAMESPACE) \
+	SOAK_DURATION_SEC=$(SOAK_DURATION_SEC) \
+	SOAK_SAMPLE_INTERVAL_SEC=$(SOAK_SAMPLE_INTERVAL_SEC) \
+	SOAK_CHAOS_PLAN=$(SOAK_CHAOS_PLAN) \
+	SOAK_REPORT_DIR=$(SOAK_REPORT_DIR) \
+	bash scripts/reliability/soak_chaos.sh
+
+k8s-check-performance: k8s-guard-overlay ## Enforce runtime performance thresholds from overlay CSV via Prometheus
+	KUBE_CONTEXT=$(KUBE_CONTEXT) \
+	KUBE_NAMESPACE=$(KUBE_NAMESPACE) \
+	PERF_PROM_DEPLOYMENT=$(PERF_PROM_DEPLOYMENT) \
+	PERF_OVERLAY=$(PERF_OVERLAY) \
+	PERF_WINDOW=$(PERF_WINDOW) \
+	PERF_THRESHOLD_FILE=$(PERF_THRESHOLD_FILE) \
+	PERF_REPORT_DIR=$(PERF_REPORT_DIR) \
+	PERF_HISTORY_FILE=$(PERF_HISTORY_FILE) \
+	PERF_REPORT_MAX_POINTS=$(PERF_REPORT_MAX_POINTS) \
+	PERF_GRAFANA_ANNOTATE=$(PERF_GRAFANA_ANNOTATE) \
+	PERF_GRAFANA_URL=$(PERF_GRAFANA_URL) \
+	PERF_GRAFANA_DASHBOARD_UID=$(PERF_GRAFANA_DASHBOARD_UID) \
+	PERF_GRAFANA_USER=$(PERF_GRAFANA_USER) \
+	PERF_GRAFANA_PASSWORD=$(PERF_GRAFANA_PASSWORD) \
+	PERF_GRAFANA_TOKEN=$(PERF_GRAFANA_TOKEN) \
+	PERF_GRAFANA_TIMEOUT_SEC=$(PERF_GRAFANA_TIMEOUT_SEC) \
+	PERF_GRAFANA_VERIFY_TLS=$(PERF_GRAFANA_VERIFY_TLS) \
+	bash scripts/reliability/check_performance_thresholds.sh
 
 k8s-fix-metrics-server: ## Patch kube-system metrics-server for kind kubelet TLS and verify metrics API
 	kubectl --context $(KUBE_CONTEXT) -n kube-system patch deployment metrics-server --type='strategic' -p '{"spec":{"template":{"spec":{"containers":[{"name":"metrics-server","args":["--cert-dir=/tmp","--secure-port=10250","--kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP","--kubelet-use-node-status-port","--metric-resolution=15s","--kubelet-insecure-tls"]}]}}}}'

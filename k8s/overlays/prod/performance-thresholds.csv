@@ -1,0 +1,2 @@
+# scenario,throughput_floor,p95_max_seconds,p99_max_seconds,error_rate_max
+ProdGrpcCanaryCreateGetDelete,0.003,0.10,0.30,0.010

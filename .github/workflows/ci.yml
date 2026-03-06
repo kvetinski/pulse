@@ -58,6 +58,29 @@ jobs:
           kubectl kustomize k8s/overlays/prod > /dev/null
           kubectl kustomize k8s/examples/alerts > /dev/null
 
+      - name: Generate performance report artifacts (CI fixture)
+        run: |
+          PERF_OVERLAY=ci \
+          PERF_REPORT_DIR=artifacts/reliability \
+          PERF_HISTORY_FILE=artifacts/reliability/perf-history.jsonl \
+          scripts/reliability/generate_ci_perf_artifacts.sh
+
+      - name: Upload performance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/reliability/perf-gate-*.json
+            artifacts/reliability/perf-gate-*.log
+            artifacts/reliability/perf-report-*.md
+            artifacts/reliability/perf-report-*.svg
+            artifacts/reliability/performance-history.html
+            artifacts/reliability/perf-history-*.svg
+            artifacts/reliability/perf-history.jsonl
+          if-no-files-found: warn
+          retention-days: 14
+
   integration-compose:
     name: Integration (Kafka + Redis via Compose)
     runs-on: ubuntu-latest

@@ -6,6 +6,7 @@ resources:
   - rbac.yaml
   - redis.yaml
   - kafka.yaml
+  - storage.yaml
   - prometheus.yaml
   - configmap.yaml
   - pdb.yaml

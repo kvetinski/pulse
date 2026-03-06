@@ -10,7 +10,7 @@ data:
       - name: Prometheus
         type: prometheus
         access: proxy
-        url: http://prometheus.pulse.svc.cluster.local:9090
+        url: http://prometheus:9090
         isDefault: true
         editable: false
 ---
@@ -138,4 +138,5 @@ spec:
           configMap:
             name: pulse-runtime-dashboard
         - name: grafana-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: grafana-data

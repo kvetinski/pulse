@@ -67,14 +67,20 @@ Runtime env vars for overrides:
 - `PULSE_BENCH_MAX_AVG_RUN_MS` (default `200`)
 - `PULSE_BENCH_MAX_DROP_RATIO` (default `0`)
 
-### Runtime SLO Guardrails (Prometheus, manual gate for now)
+### Runtime SLO Guardrails (Prometheus, executable gate)
 
-These are documented thresholds for real gRPC scenario runs in k8s; not yet auto-gated in CI.
+These thresholds are enforced on demand via:
+
+```bash
+make k8s-check-performance K8S_OVERLAY=<kind|staging|prod> PERF_WINDOW=30m
+```
 
 | Scenario | Throughput floor | p95 max | p99 max | Error rate max |
 |---|---:|---:|---:|---:|
-| DynamicGrpcGetStaticBase64 | `>= 2.0` scenario/s | `<= 30 ms` | `<= 120 ms` | `<= 0.5%` |
-| DynamicGrpcCreateGet | `>= 0.01` scenario/s | `<= 10 ms` | `<= 25 ms` | `<= 0.5%` |
+| kind: DynamicGrpcCreateGetDeleteCanary | `>= 0.01` scenario/s | `<= 50 ms` | `<= 200 ms` | `<= 0.5%` |
+| staging: StagingGrpcCreateGet | `>= 0.01` scenario/s | `<= 80 ms` | `<= 250 ms` | `<= 0.5%` |
+| staging: StagingGrpcCreateGetDelete | `>= 0.05` scenario/s | `<= 80 ms` | `<= 250 ms` | `<= 0.5%` |
+| prod: ProdGrpcCanaryCreateGetDelete | `>= 0.003` scenario/s | `<= 100 ms` | `<= 300 ms` | `<= 1.0%` |
 
 ## Before/After Optimization Delta
 
