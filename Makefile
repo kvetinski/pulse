@@ -110,7 +110,7 @@ proto-descriptor-clean: ## Remove generated descriptor set
 
 release-tag: ## Create annotated semantic version tag (usage: make release-tag VERSION=0.1.0)
 	@if [ -z "$(VERSION)" ]; then echo "VERSION is required (example: make release-tag VERSION=0.1.0)"; exit 1; fi
-	@if ! printf '%s\n' "$(VERSION)" | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+$$'; then echo "VERSION must be semantic x.y.z"; exit 1; fi
+	@if ! printf '%s\n' "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then echo "VERSION must be semantic x.y.z"; exit 1; fi
 	@if [ -n "$$(git status --porcelain)" ]; then echo "working tree is not clean; commit or stash changes before tagging"; exit 1; fi
 	@if git rev-parse -q --verify "refs/tags/v$(VERSION)" >/dev/null; then echo "tag v$(VERSION) already exists"; exit 1; fi
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
