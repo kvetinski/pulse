@@ -3,6 +3,7 @@ SHELL := /bin/bash
 CARGO ?= cargo
 PROTOC ?= protoc
 RUST_LOG ?= info
+VERSION ?=
 K8S_OVERLAY ?= kind
 K8S_OVERLAY_DIR ?= k8s/overlays/$(K8S_OVERLAY)
 K8S_KIND_CONTEXT ?= kind-account
@@ -57,7 +58,7 @@ PERF_GRAFANA_TOKEN ?=
 PERF_GRAFANA_TIMEOUT_SEC ?= 8
 PERF_GRAFANA_VERIFY_TLS ?= true
 
-.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-guard-overlay k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-stop-pods k8s-start-pods k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-show-secret-example k8s-apply-secret-example k8s-apply-prometheusrule k8s-delete-prometheusrule k8s-chaos-restart-kafka k8s-chaos-restart-redis k8s-chaos-restart-pulse k8s-soak-chaos k8s-check-performance k8s-fix-metrics-server
+.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean release-tag release-tag-push docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-guard-overlay k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-stop-pods k8s-start-pods k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-show-secret-example k8s-apply-secret-example k8s-apply-prometheusrule k8s-delete-prometheusrule k8s-chaos-restart-kafka k8s-chaos-restart-redis k8s-chaos-restart-pulse k8s-soak-chaos k8s-check-performance k8s-fix-metrics-server
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-24s %s\n", $$1, $$2}'
@@ -106,6 +107,18 @@ proto-descriptor: ## Build descriptor set (override PROTO_FILES/PROTO_SRC_DIRS/P
 
 proto-descriptor-clean: ## Remove generated descriptor set
 	rm -f $(PROTO_DESCRIPTOR)
+
+release-tag: ## Create annotated semantic version tag (usage: make release-tag VERSION=0.1.0)
+	@if [ -z "$(VERSION)" ]; then echo "VERSION is required (example: make release-tag VERSION=0.1.0)"; exit 1; fi
+	@if ! printf '%s\n' "$(VERSION)" | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+$$'; then echo "VERSION must be semantic x.y.z"; exit 1; fi
+	@if [ -n "$$(git status --porcelain)" ]; then echo "working tree is not clean; commit or stash changes before tagging"; exit 1; fi
+	@if git rev-parse -q --verify "refs/tags/v$(VERSION)" >/dev/null; then echo "tag v$(VERSION) already exists"; exit 1; fi
+	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	@echo "created tag v$(VERSION)"
+
+release-tag-push: ## Push semantic version tag to origin (usage: make release-tag-push VERSION=0.1.0)
+	@if [ -z "$(VERSION)" ]; then echo "VERSION is required (example: make release-tag-push VERSION=0.1.0)"; exit 1; fi
+	git push origin "v$(VERSION)"
 
 docker-build: ## Build Docker image via compose
 	docker compose build pulse

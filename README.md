@@ -73,13 +73,17 @@ Runtime flow:
 - `k8s/examples/secrets/pulse-secret.<overlay>.example.yaml`: per-overlay Kubernetes secret examples.
 - `k8s/examples/alerts/pulse-prometheusrule.<overlay>.yaml`: per-overlay PrometheusRule alert manifests.
 - `k8s/examples/image-digests.example.yaml`: digest pinning snippet (`image@sha256`) for overlays.
-- `docs/architecture-decisions.md`: runtime architecture decisions and tradeoffs.
+- `docs/adr/README.md`: architecture decision records (ADRs).
+- `docs/architecture-decisions.md`: ADR index pointer for compatibility.
+- `CHANGELOG.md`: versioned release notes.
+- `docs/compatibility.md`: semantic versioning and compatibility policy.
 - `docs/benchmarks.md`: measured benchmark results (environment, throughput, latency, error, resource snapshot).
 - `docs/operational-safety.md`: shutdown, retry, DLQ, and queue safety behavior.
 - `docs/runbook.md`: incident response and on-call checklist.
 - `docs/runbook-drill-2026-03-03.md`: runbook drill evidence (commands + outputs).
 - `docs/slo-alerts.md`: SLO draft and alert suggestions.
 - `docs/testing-plan.md`: test strategy.
+- `docs/pod-security-baseline.md`: Kubernetes pod security baseline and control mapping.
 - `docs/reliability-testing.md`: soak/chaos reliability test workflow and acceptance criteria.
 - `docs/rollout-plan.md`: staged rollout plan.
 
@@ -90,6 +94,22 @@ Runtime flow:
 - Docker + Docker Compose.
 - (Optional) kind + kubectl for Kubernetes deployment.
 - A target gRPC service (example scenarios use `account.v1.AccountService`).
+
+## Release Discipline
+
+- Release notes are tracked in `CHANGELOG.md`.
+- Compatibility expectations are defined in `docs/compatibility.md`.
+- Create semantic version tag:
+
+```bash
+make release-tag VERSION=0.1.0
+```
+
+- Push semantic version tag:
+
+```bash
+make release-tag-push VERSION=0.1.0
+```
 
 ## Build descriptor set
 
