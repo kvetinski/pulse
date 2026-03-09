@@ -120,13 +120,13 @@ impl JobPublisher for InMemoryJobPublisher {
         self.published_keys.lock().await.push(key.to_string());
         self.published_jobs.lock().await.push(job.clone());
 
-        if let Some(threshold) = self.fail_attempt_ge {
-            if job.attempt >= threshold {
-                return Err(format!(
-                    "simulated publisher outage for attempt {}",
-                    job.attempt
-                ));
-            }
+        if let Some(threshold) = self.fail_attempt_ge
+            && job.attempt >= threshold
+        {
+            return Err(format!(
+                "simulated publisher outage for attempt {}",
+                job.attempt
+            ));
         }
 
         let msg = InMemoryJobMessage {
