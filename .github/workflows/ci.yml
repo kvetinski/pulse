@@ -148,31 +148,8 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Dependency vulnerability scan (RustSec)
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
-
-      - name: Build image for scanning
-        run: docker build -t pulse:ci .
-
-      - name: Container vulnerability scan (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: pulse:ci
-          format: json
-          output: trivy-image-report.json
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: CRITICAL,HIGH
-
-      - name: Generate image SBOM (SPDX JSON)
-        uses: anchore/sbom-action@v0
-        with:
-          image: pulse:ci
-          format: spdx-json
-          output-file: pulse-image-sbom.spdx.json
+      - name: Run supply-chain checks
+        run: make supply-chain-check
 
       - name: Upload supply-chain artifacts
         if: always()
@@ -180,8 +157,8 @@ jobs:
         with:
           name: supply-chain-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            trivy-image-report.json
-            pulse-image-sbom.spdx.json
+            artifacts/security/trivy-image-report.json
+            artifacts/security/pulse-image-sbom.spdx.json
           if-no-files-found: warn
           retention-days: 14
 

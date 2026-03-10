@@ -47,6 +47,9 @@ SOAK_REPORT_DIR ?= artifacts/reliability
 PERF_WINDOW ?= 30m
 PERF_THRESHOLD_FILE ?= k8s/overlays/$(K8S_OVERLAY)/performance-thresholds.csv
 PERF_REPORT_DIR ?= artifacts/reliability
+SECURITY_REPORT_DIR ?= artifacts/security
+TRIVY_REPORT_FILE ?= $(SECURITY_REPORT_DIR)/trivy-image-report.json
+SYFT_SBOM_FILE ?= $(SECURITY_REPORT_DIR)/pulse-image-sbom.spdx.json
 PERF_PROM_DEPLOYMENT ?= prometheus
 PERF_OVERLAY ?= $(K8S_OVERLAY)
 PERF_HISTORY_FILE ?= $(PERF_REPORT_DIR)/perf-history.jsonl
@@ -106,17 +109,18 @@ ci-check-laptop: ## Lower-CPU local quality checks (no release bench / image bui
 
 supply-chain-check: ## Run local supply-chain checks (cargo-audit + trivy scan + SBOM)
 	@command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+	@mkdir -p $(SECURITY_REPORT_DIR)
 	cargo audit
 	docker build -t pulse:ci .
 	@if command -v trivy >/dev/null 2>&1; then \
-		trivy image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --format json --output trivy-image-report.json pulse:ci; \
+		trivy image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --format json --output $(TRIVY_REPORT_FILE) pulse:ci; \
 	else \
-		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$$(pwd)":/work $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --format json --output /work/trivy-image-report.json pulse:ci; \
+		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$$(pwd)":/work $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --format json --output /work/$(TRIVY_REPORT_FILE) pulse:ci; \
 	fi
 	@if command -v syft >/dev/null 2>&1; then \
-		syft pulse:ci -o spdx-json=pulse-image-sbom.spdx.json; \
+		syft pulse:ci -o spdx-json=$(SYFT_SBOM_FILE); \
 	else \
-		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$$(pwd)":/work $(SYFT_IMAGE) pulse:ci -o spdx-json=/work/pulse-image-sbom.spdx.json; \
+		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$$(pwd)":/work $(SYFT_IMAGE) pulse:ci -o spdx-json=/work/$(SYFT_SBOM_FILE); \
 	fi
 
 supply-chain-check-laptop: ## Lower-CPU supply-chain check (audit only)

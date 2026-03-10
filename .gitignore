@@ -4,3 +4,4 @@ descriptors/*.pb
 artifacts/
 __pycache__/
 *.py[cod]
+.cargo-local/
