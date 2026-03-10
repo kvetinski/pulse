@@ -25,6 +25,8 @@ KAFKA_IMAGE ?= apache/kafka:3.9.0
 REDIS_IMAGE ?= redis:7-alpine
 PROMETHEUS_IMAGE ?= prom/prometheus:v2.54.1
 GRAFANA_IMAGE ?= grafana/grafana:11.2.0
+TRIVY_IMAGE ?= aquasec/trivy:0.56.2
+SYFT_IMAGE ?= anchore/syft:v1.14.0
 REGISTRY ?=
 IMAGE_REPO ?= pulse
 IMAGE_TAG ?= latest
@@ -57,8 +59,9 @@ PERF_GRAFANA_PASSWORD ?= admin
 PERF_GRAFANA_TOKEN ?=
 PERF_GRAFANA_TIMEOUT_SEC ?= 8
 PERF_GRAFANA_VERIFY_TLS ?= true
+LAPTOP_CARGO_JOBS ?= 2
 
-.PHONY: help start start-release check fmt clippy bench ci-check proto-descriptor proto-descriptor-clean release-tag release-tag-push docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-guard-overlay k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-stop-pods k8s-start-pods k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-show-secret-example k8s-apply-secret-example k8s-apply-prometheusrule k8s-delete-prometheusrule k8s-chaos-restart-kafka k8s-chaos-restart-redis k8s-chaos-restart-pulse k8s-soak-chaos k8s-check-performance k8s-fix-metrics-server
+.PHONY: help start start-release check fmt clippy bench ci-check ci-check-laptop ci-check-full supply-chain-check supply-chain-check-laptop proto-descriptor proto-descriptor-clean release-tag release-tag-push docker-build docker-build-image docker-push docker-rebuild docker-up docker-down docker-logs test-compose-up test-compose-down test-integration-compose kind-build kind-pull-deps kind-load kind-load-deps k8s-guard-overlay k8s-deploy-kind k8s-deploy k8s-deploy-push k8s-delete k8s-stop-pods k8s-start-pods k8s-logs k8s-status k8s-leader-key k8s-kafka-topics k8s-pf-grafana k8s-apply-hpa-example k8s-apply-pdb-example k8s-apply-networkpolicy-example k8s-show-digest-pinning-example k8s-show-secret-example k8s-apply-secret-example k8s-apply-prometheusrule k8s-delete-prometheusrule k8s-chaos-restart-kafka k8s-chaos-restart-redis k8s-chaos-restart-pulse k8s-soak-chaos k8s-check-performance k8s-fix-metrics-server
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-24s %s\n", $$1, $$2}'
@@ -93,6 +96,34 @@ ci-check: ## Full local quality gates used in CI
 	$(CARGO) run --locked --release --bin pulse_bench
 	docker compose config -q
 	$(MAKE) proto-descriptor
+
+ci-check-laptop: ## Lower-CPU local quality checks (no release bench / image build)
+	$(CARGO) fmt --all -- --check
+	CARGO_BUILD_JOBS=$(LAPTOP_CARGO_JOBS) $(CARGO) clippy --locked --all-targets --all-features -- -D warnings
+	CARGO_BUILD_JOBS=$(LAPTOP_CARGO_JOBS) $(CARGO) test --locked --all-targets --all-features
+	docker compose config -q
+	$(MAKE) proto-descriptor
+
+supply-chain-check: ## Run local supply-chain checks (cargo-audit + trivy scan + SBOM)
+	@command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+	cargo audit
+	docker build -t pulse:ci .
+	@if command -v trivy >/dev/null 2>&1; then \
+		trivy image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --format json --output trivy-image-report.json pulse:ci; \
+	else \
+		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$$(pwd)":/work $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --format json --output /work/trivy-image-report.json pulse:ci; \
+	fi
+	@if command -v syft >/dev/null 2>&1; then \
+		syft pulse:ci -o spdx-json=pulse-image-sbom.spdx.json; \
+	else \
+		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$$(pwd)":/work $(SYFT_IMAGE) pulse:ci -o spdx-json=/work/pulse-image-sbom.spdx.json; \
+	fi
+
+supply-chain-check-laptop: ## Lower-CPU supply-chain check (audit only)
+	@command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+	cargo audit
+
+ci-check-full: ci-check supply-chain-check ## Local equivalent of CI quality + supply-chain jobs
 
 proto-descriptor: ## Build descriptor set (override PROTO_FILES/PROTO_SRC_DIRS/PROTO_IMPORT_DIRS)
 	@mkdir -p $(PROTO_OUT_DIR)

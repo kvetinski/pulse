@@ -8,7 +8,7 @@ async-trait = "0.1"
 axum = "0.7"
 base64 = "0.22"
 hdrhistogram = "7"
-prometheus = "0.13"
+prometheus = { version = "0.13", default-features = false }
 prost = "0.13"
 prost-types = "0.13"
 rand = "0.9"
