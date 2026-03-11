@@ -53,6 +53,31 @@ Runtime flow:
 6. Scenario steps execute; step/scenario metrics are collected.
 7. Result summary is published to Kafka results topic.
 
+## Runtime configuration
+
+Common environment variables (non-exhaustive):
+
+- `PULSE_SCENARIOS_FILE`: path to scenarios YAML (defaults to `./scenarios.yaml` if present).
+- `PULSE_GRPC_DESCRIPTOR_SET`: path to compiled descriptor set (required for dynamic gRPC).
+- `PULSE_ENDPOINT`: default scenario endpoint (used when scenario/step endpoint is omitted).
+- `PULSE_KAFKA_BROKERS`: Kafka bootstrap brokers (`host:port`).
+- `PULSE_KAFKA_JOBS_TOPIC`, `PULSE_KAFKA_RESULTS_TOPIC`, `PULSE_KAFKA_DLQ_TOPIC`
+- `PULSE_KAFKA_GROUP_ID`: worker consumer group id.
+- `PULSE_REDIS_URL`: Redis connection string.
+- `PULSE_QUEUE_CAPACITY`: Kafka producer/consumer queue capacity.
+- `PULSE_WORKER_MAX_RETRIES`, `PULSE_WORKER_RETRY_BASE_DELAY_MS`
+- `PULSE_LEADER_LOCK_TTL_MS`, `PULSE_LEADER_RENEW_INTERVAL_MS`, `PULSE_SCHEDULER_TICK_INTERVAL_MS`
+- `PULSE_NODE_ID`: unique node identifier (defaults to `node-<pid>`).
+- `PULSE_METRICS_ENABLED`, `PULSE_METRICS_BIND` (Prometheus at `/metrics`).
+
+## Known limitations / caveats
+
+- Dynamic gRPC is unary only (no streaming yet).
+- Retry delay happens inside the worker loop; during backoff, the consumer is paused for that worker.
+- Idempotency is claimed before execution; a crash between claim and retry publish can skip retries for that attempt.
+- Kafka consumer `max.poll.interval.ms` is not configurable yet; long scenario runs may require a higher value.
+- Results publishing is best-effort (failures are logged but not retried or DLQ’d).
+
 ## Repository layout
 
 - `src/main.rs`: bootstrap, config, gateway initialization.
@@ -259,6 +284,13 @@ Reset observability history (destructive):
 ```bash
 docker compose down -v
 ```
+
+## Supply-chain outputs
+
+`make supply-chain-check` writes artifacts to:
+
+- `artifacts/security/trivy-image-report.json`
+- `artifacts/security/pulse-image-sbom.spdx.json`
 
 ## Run on Kubernetes (kind)
 
