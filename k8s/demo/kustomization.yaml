@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Demo-only target and single-node dependencies. Staging and production-oriented
+# overlays do not include this package and must use externally managed services.
+resources:
+  - grpc-target.yaml
+  - pulse-metrics-headless.yaml
+  - redis.yaml
+  - kafka.yaml
+  - storage.yaml
+  - prometheus.yaml
+  - grafana.yaml
+
+configMapGenerator:
+  - name: pulse-runtime-dashboard
+    files:
+      - pulse-runtime-dashboard.json=dashboards/pulse-runtime-dashboard.json
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"

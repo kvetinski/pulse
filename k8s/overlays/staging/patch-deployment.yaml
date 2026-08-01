@@ -10,3 +10,8 @@ spec:
       containers:
         - name: pulse
           imagePullPolicy: Always
+      volumes:
+        - name: pulse-secrets
+          secret:
+            secretName: pulse-secrets
+            optional: false

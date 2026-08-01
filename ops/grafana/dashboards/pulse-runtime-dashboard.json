@@ -428,7 +428,7 @@
               },
               {
                 "color": "green",
-                "value": 0.01
+                "value": 1.0
               }
             ]
           },
@@ -494,7 +494,7 @@
               },
               {
                 "color": "red",
-                "value": 0.05
+                "value": 0.25
               }
             ]
           },
@@ -574,7 +574,7 @@
               },
               {
                 "color": "red",
-                "value": 0.005
+                "value": 0.01
               }
             ]
           },
@@ -680,6 +680,286 @@
       ],
       "title": "Perf Gate Composite Status",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(pulse_scheduler_job_publish_failures_total[$__rate_interval]))",
+          "legendFormat": "scheduler publish",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(pulse_worker_result_publish_failures_total[$__rate_interval]))",
+          "legendFormat": "result publish",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(pulse_worker_dlq_publish_failures_total[$__rate_interval]))",
+          "legendFormat": "DLQ publish",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(pulse_worker_job_commit_failures_total[$__rate_interval]))",
+          "legendFormat": "source commit",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Delivery and Settlement Failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(pulse_worker_uncommitted_jobs)",
+          "legendFormat": "uncommitted jobs",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(pulse_worker_retry_queue_depth)",
+          "legendFormat": "settlement retries",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(pulse_scheduler_incomplete_dispatch_slices)",
+          "legendFormat": "unacknowledged slices",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Bounded Work and Dispatch State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(pulse_worker_execution_lease_total[$__rate_interval]))",
+          "legendFormat": "lease {{outcome}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(pulse_aggregate_results_total[$__rate_interval]))",
+          "legendFormat": "aggregate {{outcome}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (class) (rate(pulse_scheduler_leadership_renewal_failures_total[$__rate_interval]))",
+          "legendFormat": "leader renewal {{class}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Lease, Leadership, and Aggregation Outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pulse_worker_job_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "job age p95",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pulse_worker_processing_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "job processing p95",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, kind, outcome) (rate(pulse_kafka_publish_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "publish {{kind}} {{outcome}} p95",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pulse_kafka_commit_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "sync commit p95",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Job and Settlement Latency p95",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",
@@ -736,11 +1016,11 @@
         "type": "textbox",
         "label": "Throughput Floor (req/s)",
         "hide": 0,
-        "query": "0.01",
+        "query": "1.0",
         "current": {
           "selected": false,
-          "text": "0.01",
-          "value": "0.01"
+          "text": "1.0",
+          "value": "1.0"
         }
       },
       {
@@ -748,11 +1028,11 @@
         "type": "textbox",
         "label": "p95 Max (s)",
         "hide": 0,
-        "query": "0.05",
+        "query": "0.25",
         "current": {
           "selected": false,
-          "text": "0.05",
-          "value": "0.05"
+          "text": "0.25",
+          "value": "0.25"
         }
       },
       {
@@ -760,11 +1040,11 @@
         "type": "textbox",
         "label": "p99 Max (s)",
         "hide": 0,
-        "query": "0.20",
+        "query": "0.50",
         "current": {
           "selected": false,
-          "text": "0.20",
-          "value": "0.20"
+          "text": "0.50",
+          "value": "0.50"
         }
       },
       {
@@ -772,11 +1052,11 @@
         "type": "textbox",
         "label": "Error Rate Max",
         "hide": 0,
-        "query": "0.005",
+        "query": "0.01",
         "current": {
           "selected": false,
-          "text": "0.005",
-          "value": "0.005"
+          "text": "0.01",
+          "value": "0.01"
         }
       }
     ]
@@ -789,6 +1069,6 @@
   "timezone": "",
   "title": "Pulse Runtime Metrics",
   "uid": "pulse-runtime-metrics",
-  "version": 3,
+  "version": 5,
   "weekStart": ""
 }

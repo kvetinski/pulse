@@ -6,7 +6,12 @@ metadata:
 data:
   RUST_LOG: "warn"
   PULSE_ENDPOINT: "http://account.account.svc.cluster.local:8080"
+  PULSE_TARGET_ALLOWLIST: "account.account.svc.cluster.local"
   PULSE_SCENARIOS_FILE: "/app/scenarios.prod.yaml"
-  PULSE_QUEUE_CAPACITY: "4096"
+  PULSE_KAFKA_BROKERS: "replace-with-managed-prod-kafka:9092"
+  PULSE_KAFKA_TOPIC_MANAGEMENT_ENABLED: "false"
+  PULSE_KAFKA_TOPIC_REPLICATION_FACTOR: "3"
+  PULSE_KAFKA_PRODUCER_QUEUE_MESSAGES: "4096"
+  PULSE_KAFKA_CONSUMER_QUEUE_KBYTES: "16384"
   PULSE_WORKER_MAX_RETRIES: "3"
   PULSE_WORKER_RETRY_BASE_DELAY_MS: "1000"

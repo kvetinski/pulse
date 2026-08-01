@@ -1,4 +1,5 @@
 apiVersion: v1
+# Demo-only Prometheus deployment.
 kind: ConfigMap
 metadata:
   name: prometheus-config
@@ -16,8 +17,11 @@ data:
 
       - job_name: pulse
         metrics_path: /metrics
-        static_configs:
-          - targets: ["pulse:9090"]
+        dns_sd_configs:
+          - names: ["pulse-metrics-headless"]
+            type: A
+            port: 9090
+            refresh_interval: 5s
 ---
 apiVersion: v1
 kind: Service
@@ -51,6 +55,8 @@ spec:
       labels:
         app: prometheus
     spec:
+      # DNS discovery of the headless service needs no Kubernetes API token.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534

@@ -14,4 +14,5 @@ patches:
 images:
   - name: pulse
     newName: ghcr.io/your-org/pulse
-    newTag: staging
+    # Replace with the reviewed release version or an immutable digest.
+    newTag: "0.2.0"

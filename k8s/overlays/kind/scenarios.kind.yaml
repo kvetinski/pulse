@@ -1,52 +1,44 @@
 version: 1
 scenarios:
-  - name: DynamicGrpcCreateGet
-    endpoint: http://account.account:8080
-    scenarios_per_sec: 3
-    max_concurrency: 10
-    duration: 20s
-    repeat:
-      type: once
-    partition_key_strategy: execution_key
-    steps:
-      - protocol: grpc
-        service: account.v1.AccountService
-        method: CreateAccount
-        request_fields:
-          phone: "${gen.phone}"
-        extract:
-          user_id: "account.id"
-
-      - protocol: grpc
-        service: account.v1.AccountService
-        method: GetAccount
-        request_fields:
-          id: "${ctx.user_id}"
-
-  - name: DynamicGrpcCreateGetDeleteCanary
-    endpoint: http://account.account:8080
-    scenarios_per_sec: 1
-    max_concurrency: 5
-    duration: 10s
+  # Recurring, two-slice healthy load keeps jobs/results/commits advancing during
+  # kind soak and chaos runs without depending on another repository.
+  - name: KindUnaryHealthySoak
+    endpoint: http://grpc-target:50051
+    scenarios_per_sec: 12
+    max_concurrency: 4
+    duration: 5s
     repeat:
       type: every
-      interval: 1m
+      interval: 10s
     partition_key_strategy: execution_key
     steps:
       - protocol: grpc
-        service: account.v1.AccountService
-        method: CreateAccount
+        service: pulse.demo.v1.DemoService
+        method: Echo
         request_fields:
-          phone: "${gen.phone}"
+          message: pulse-kind-soak
+          delay_ms: 20
+          fail: false
         extract:
-          user_id: "account.id"
+          echoed_message: message
+          target_instance: target_instance
+
+  # A low-rate recurring non-OK response demonstrates that target failures remain
+  # measurements. It is intentionally excluded from the healthy smoke threshold.
+  - name: KindUnaryExpectedTargetFailure
+    endpoint: http://grpc-target:50051
+    scenarios_per_sec: 1
+    max_concurrency: 1
+    duration: 2s
+    repeat:
+      type: every
+      interval: 30s
+    partition_key_strategy: execution_key
+    steps:
       - protocol: grpc
-        service: account.v1.AccountService
-        method: GetAccount
+        service: pulse.demo.v1.DemoService
+        method: Echo
         request_fields:
-          id: "${ctx.user_id}"
-      - protocol: grpc
-        service: account.v1.AccountService
-        method: DeleteAccount
-        request_fields:
-          id: "${ctx.user_id}"
+          message: pulse-kind-expected-target-failure
+          delay_ms: 20
+          fail: true

@@ -1,0 +1,17 @@
+apiVersion: v1
+# Demo-only discovery service: Prometheus resolves every ready Pulse pod instead
+# of sampling one random backend through the application ClusterIP.
+kind: Service
+metadata:
+  name: pulse-metrics-headless
+  namespace: pulse
+  labels:
+    app: pulse-metrics-headless
+spec:
+  clusterIP: None
+  selector:
+    app: pulse
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics

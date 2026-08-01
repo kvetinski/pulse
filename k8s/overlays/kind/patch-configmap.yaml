@@ -5,5 +5,11 @@ metadata:
   namespace: pulse
 data:
   RUST_LOG: "info"
-  PULSE_ENDPOINT: "http://account.account:8080"
+  PULSE_ENDPOINT: "http://grpc-target:50051"
+  PULSE_TARGET_ALLOWLIST: "grpc-target"
   PULSE_SCENARIOS_FILE: "/app/scenarios.kind.yaml"
+  PULSE_GRPC_DESCRIPTOR_SET: "/app/descriptors/demo.pb"
+  PULSE_KAFKA_BROKERS: "kafka:9092"
+  PULSE_KAFKA_TOPIC_MANAGEMENT_ENABLED: "true"
+  PULSE_KAFKA_TOPIC_PARTITIONS: "3"
+  PULSE_KAFKA_TOPIC_REPLICATION_FACTOR: "1"

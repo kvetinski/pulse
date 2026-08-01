@@ -10,3 +10,8 @@ spec:
       containers:
         - name: pulse
           imagePullPolicy: IfNotPresent
+          env:
+            - name: PULSE_REDIS_URL_FILE
+              $patch: delete
+            - name: PULSE_REDIS_URL
+              value: redis://redis:6379

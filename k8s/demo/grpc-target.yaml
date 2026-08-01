@@ -1,0 +1,83 @@
+apiVersion: v1
+# Repository-owned deterministic unary fixture. Demo only; not a production target.
+kind: Service
+metadata:
+  name: grpc-target
+  namespace: pulse
+  labels:
+    app: grpc-target
+spec:
+  selector:
+    app: grpc-target
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-target
+  namespace: pulse
+  labels:
+    app: grpc-target
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grpc-target
+  template:
+    metadata:
+      labels:
+        app: grpc-target
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: grpc-target
+          image: pulse-demo-target:local
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          env:
+            - name: PULSE_DEMO_TARGET_BIND
+              value: 0.0.0.0:50051
+            - name: PULSE_DEMO_TARGET_INSTANCE
+              value: kind-fixture-1
+          ports:
+            - containerPort: 50051
+              name: grpc
+          startupProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "32Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"

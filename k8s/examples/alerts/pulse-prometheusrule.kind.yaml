@@ -99,3 +99,75 @@ spec:
             summary: "Pulse dead-letter publish is failing"
             description: "DLQ publish failures are non-zero for 5m in pulse-dev."
             runbook: "docs/runbook.md"
+
+        - alert: PulseResultPublishFailures
+          expr: sum(rate(pulse_worker_result_publish_failures_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse result publication is failing"
+            description: "Result publication failures can leave source jobs unsettled in pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseSourceCommitFailures
+          expr: sum(rate(pulse_worker_job_commit_failures_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse source offset commits are failing"
+            description: "Synchronous source commit failures are non-zero in pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseUncommittedJobsStuck
+          expr: sum(pulse_worker_uncommitted_jobs) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse jobs remain unsettled"
+            description: "At least one consumed job has remained uncommitted for 5m in pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseIncompleteDispatch
+          expr: sum(pulse_scheduler_incomplete_dispatch_slices) > 0
+          for: 5m
+          labels:
+            severity: warning
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse dispatch window is incomplete"
+            description: "A deterministic scheduler slice has remained unacknowledged for 5m in pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseSummaryPublishFailures
+          expr: sum(rate(pulse_kafka_publish_duration_seconds_count{kind="summary",outcome="failed"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse summary publication is failing"
+            description: "The Redis summary outbox cannot publish acknowledged Kafka records in pulse-dev."
+            runbook: "docs/runbook.md"
+
+        - alert: PulseAggregateTimeouts
+          expr: sum(rate(pulse_aggregate_results_total{outcome="timed_out"}[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+            service: pulse
+            env: kind
+          annotations:
+            summary: "Pulse runs are timing out incomplete"
+            description: "At least one run reached its aggregation deadline without every slice in pulse-dev."
+            runbook: "docs/runbook.md"

@@ -6,6 +6,7 @@ namespace: pulse-dev
 resources:
   - namespace.yaml
   - ../../base
+  - ../../demo
 
 patches:
   - path: patch-configmap.yaml
@@ -14,4 +15,7 @@ patches:
 images:
   - name: pulse
     newName: pulse
+    newTag: local
+  - name: pulse-demo-target
+    newName: pulse-demo-target
     newTag: local

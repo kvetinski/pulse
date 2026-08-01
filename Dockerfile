@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.88.0-bookworm AS builder
 WORKDIR /app
 
 RUN apt-get update \
@@ -20,7 +20,15 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 
-RUN cargo build --release
+RUN cargo build --locked --release --bin pulse \
+    && mkdir -p /app/descriptors \
+    && protoc \
+        -I /app/src \
+        -I /usr/include \
+        --include_imports \
+        --include_source_info \
+        --descriptor_set_out=/app/descriptors/services.pb \
+        /app/src/account.proto
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
@@ -32,11 +40,11 @@ RUN apt-get update \
     && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/pulse pulse
 
 COPY --from=builder /app/target/release/pulse /usr/local/bin/pulse
+COPY --from=builder /app/descriptors/services.pb /app/descriptors/services.pb
 COPY scenarios.yaml /app/scenarios.yaml
 COPY k8s/overlays/kind/scenarios.kind.yaml /app/scenarios.kind.yaml
 COPY k8s/overlays/staging/scenarios.staging.yaml /app/scenarios.staging.yaml
 COPY k8s/overlays/prod/scenarios.prod.yaml /app/scenarios.prod.yaml
-COPY descriptors /app/descriptors
 
 RUN chown -R 10001:10001 /app /home/pulse
 

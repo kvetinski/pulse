@@ -17,3 +17,8 @@ spec:
             limits:
               cpu: "1000m"
               memory: "1Gi"
+      volumes:
+        - name: pulse-secrets
+          secret:
+            secretName: pulse-secrets
+            optional: false
