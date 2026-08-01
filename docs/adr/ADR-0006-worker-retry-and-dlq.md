@@ -1,17 +1,22 @@
 # ADR-0006: Worker-Level Retry and DLQ Strategy
 
-- Status: Accepted
+- Status: Superseded by ADR-0007 and ADR-0009
 - Date: 2026-03-06
 
 ## Context
 
-Scenario execution can fail due to transient target errors or infrastructure issues. Pulse needs bounded retries and a clear sink for exhausted failures.
+This record captured the prototype policy and is retained as historical context.
+Target failures and Pulse infrastructure failures are now separate classes.
 
 ## Decision
 
-Use worker-level, job-based retries with exponential backoff and publish exhausted or retry-publish-failed jobs to a dedicated DLQ topic.
+The current runtime records target failures as results without whole-slice retry. It
+retries terminal publication locally with bounded exponential backoff and jitter; if
+settlement cannot become durable, it retains the uncommitted source. Permanent and
+poison records require an acknowledged DLQ publication. There is no current delayed
+retry-topic adapter.
 
-## Consequences
+## Historical Consequences
 
 - Improves resilience to transient failures.
 - Makes unrecoverable failures observable and replayable through DLQ operations.

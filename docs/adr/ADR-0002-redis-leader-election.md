@@ -1,6 +1,6 @@
 # ADR-0002: Redis Leader Election
 
-- Status: Accepted
+- Status: Amended by ADR-0009
 - Date: 2026-03-06
 
 ## Context
@@ -10,6 +10,11 @@ Only one scheduler should publish due scenario jobs at a time. Pulse already dep
 ## Decision
 
 Use Redis lock semantics (`SET NX PX`) with owner-verified renew/relinquish scripts for leader election.
+
+ADR-0009 adds an opaque lease token, a monotonic fencing token, Redis-time expiry,
+typed dependency errors, and fence-checked dispatch-ledger mutations. This record's
+choice of Redis remains; its original lock description is not the complete current
+safety model.
 
 ## Consequences
 

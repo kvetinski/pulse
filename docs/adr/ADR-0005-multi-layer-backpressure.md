@@ -1,6 +1,6 @@
 # ADR-0005: Multi-Layer Backpressure
 
-- Status: Accepted
+- Status: Amended by ADR-0011
 - Date: 2026-03-06
 
 ## Context
@@ -14,6 +14,9 @@ Apply backpressure at multiple layers:
 - token bucket for scenario start rate (`scenarios_per_sec`),
 - semaphore for in-flight cap (`max_concurrency`),
 - bounded producer/consumer queues and pull-based worker processing.
+
+ADR-0011 defines fractional pacing, explicit startup burst, exact cross-slice
+concurrency, continuous task reaping, and the additional bounded handoff/drain state.
 
 ## Consequences
 

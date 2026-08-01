@@ -1,6 +1,6 @@
 # ADR-0003: Redis Idempotency Keying by Execution and Attempt
 
-- Status: Accepted
+- Status: Superseded by ADR-0007 and ADR-0009
 - Date: 2026-03-06
 
 ## Context
@@ -9,9 +9,12 @@ Kafka consumers may receive duplicate deliveries due to retries/rebalances. Puls
 
 ## Decision
 
-Use Redis idempotency keys keyed by `execution_key:attempt-<n>`, with TTL, claimed before job execution.
+This original decision used a claimed-before-execution TTL key. It is retained as
+historical context only. Current execution records are renewable owner-checked leases
+with running/terminal state, expiry recovery, and terminal retention; a successful
+claim is not evidence of completion.
 
-## Consequences
+## Historical Consequences
 
 - Duplicate deliveries for the same attempt are suppressed.
 - Retries are still possible because each attempt has a distinct idempotency key.
