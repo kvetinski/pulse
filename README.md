@@ -1,490 +1,362 @@
 # Pulse
 
-Distributed, scenario-driven load engine for gRPC services.
+Failure-aware distributed gRPC scenario engine in Rust, built around Tokio, Kafka, and
+Redis.
 
-Pulse schedules scenario executions, distributes work through Kafka, coordinates leadership and idempotency with Redis, and executes chained gRPC calls with per-step metrics.
+Pulse turns a versioned YAML scenario into deterministic load slices, dispatches them
+through Kafka, coordinates fenced scheduling and renewable execution leases in Redis,
+executes dynamic unary gRPC calls from descriptor sets, and publishes durable per-slice
+measurements. The interesting part is not another protocol adapter: it is what happens
+at every Kafka/Redis/target crash boundary.
 
-## What Pulse does
+**Status:** experimental and production-oriented, with explicit limitations. Pulse is
+not described as production-grade.
 
-- Executes scenario chains (`step1 -> step2 -> ...`) with shared per-scenario context.
-- Supports dynamic gRPC calls from descriptor sets (no generated typed client required).
-- Supports per-step endpoint overrides (different services in one scenario).
-- Controls scenario start rate (`scenarios_per_sec`) and in-flight concurrency (`max_concurrency`).
-- Splits high-load scenarios into slices and distributes them across worker replicas.
-- Publishes structured run results to Kafka and prints latency percentiles in CLI logs.
+**Delivery guarantee:**
 
-## Current status
+> At-least-once target execution with deterministic job identities, lease-based
+> duplicate suppression, durable terminal-event publication, and duplicate-tolerant
+> result aggregation.
 
-Implemented:
+Pulse does **not** claim exactly-once target execution. An external gRPC side effect
+cannot be atomically committed with Kafka and Redis, a crash at that boundary can call
+the target again. Side-effecting targets need their own idempotency key or an explicit
+operator decision that replay is safe.
 
-- YAML scenario loader with schema validation (`version: 1`).
-- Dynamic gRPC unary execution using compiled descriptor sets.
-- Request templating (`${ctx.*}`, `${gen.*}`), response extraction, context reuse.
-- Distributed scheduler/worker runtime with Redis leader election and Kafka job queue.
-- Graceful shutdown handling (`SIGINT`/`SIGTERM`) across runtime loops.
-- Worker-level retry with exponential backoff and Kafka dead-letter topic.
-- Bounded Kafka producer/consumer client queues.
-- Docker Compose and Kubernetes manifests.
+## Five-minute local demo
 
-Not implemented yet:
-
-- HTTP step adapter (schema exists, runtime returns error).
-- WebSocket step adapter.
-- gRPC streaming methods (unary only).
-
-## Architecture
-
-Pulse is split by clean boundaries:
-
-- `domain/`
-  - Core contracts and abstractions (`Step`, `Scenario`, ports, errors).
-- `application/`
-  - Scenario parsing, template rendering, runner, scheduler/worker orchestration, metrics.
-- `infrastructure/`
-  - Kafka adapters (jobs/results), Redis adapters (leader/due/idempotency), dynamic gRPC gateway.
-
-Runtime flow:
-
-1. All replicas start scheduler + worker loops.
-2. Redis leader lock elects one active scheduler.
-3. Leader marks due scenarios in Redis and publishes sliced jobs to Kafka.
-4. Worker group consumes jobs from Kafka.
-5. Idempotency key in Redis prevents duplicate execution.
-6. Scenario steps execute; step/scenario metrics are collected.
-7. Result summary is published to Kafka results topic.
-
-## Runtime configuration
-
-Common environment variables (non-exhaustive):
-
-- `PULSE_SCENARIOS_FILE`: path to scenarios YAML (defaults to `./scenarios.yaml` if present).
-- `PULSE_GRPC_DESCRIPTOR_SET`: path to compiled descriptor set (required for dynamic gRPC).
-- `PULSE_ENDPOINT`: default scenario endpoint (used when scenario/step endpoint is omitted).
-- `PULSE_KAFKA_BROKERS`: Kafka bootstrap brokers (`host:port`).
-- `PULSE_KAFKA_JOBS_TOPIC`, `PULSE_KAFKA_RESULTS_TOPIC`, `PULSE_KAFKA_DLQ_TOPIC`
-- `PULSE_KAFKA_GROUP_ID`: worker consumer group id.
-- `PULSE_REDIS_URL`: Redis connection string.
-- `PULSE_QUEUE_CAPACITY`: Kafka producer/consumer queue capacity.
-- `PULSE_WORKER_MAX_RETRIES`, `PULSE_WORKER_RETRY_BASE_DELAY_MS`
-- `PULSE_LEADER_LOCK_TTL_MS`, `PULSE_LEADER_RENEW_INTERVAL_MS`, `PULSE_SCHEDULER_TICK_INTERVAL_MS`
-- `PULSE_NODE_ID`: unique node identifier (defaults to `node-<pid>`).
-- `PULSE_METRICS_ENABLED`, `PULSE_METRICS_BIND` (Prometheus at `/metrics`).
-
-## Known limitations / caveats
-
-- Dynamic gRPC is unary only (no streaming yet).
-- Retry delay happens inside the worker loop; during backoff, the consumer is paused for that worker.
-- Idempotency is claimed before execution; a crash between claim and retry publish can skip retries for that attempt.
-- Kafka consumer `max.poll.interval.ms` is not configurable yet; long scenario runs may require a higher value.
-- Results publishing is best-effort (failures are logged but not retried or DLQ’d).
-
-## Repository layout
-
-- `src/main.rs`: bootstrap, config, gateway initialization.
-- `src/application/service.rs`: leader/scheduler/worker runtime.
-- `src/application/scenarios.rs`: YAML schema + validation + conversion to domain.
-- `src/application/steps.rs`: dynamic gRPC step execution.
-- `src/infrastructure/grpc/dynamic_gateway.rs`: descriptor-backed gRPC caller.
-- `scenarios.yaml`: local/compose scenario file.
-- `k8s/base/`: shared Kubernetes manifests.
-- `k8s/overlays/kind|staging|prod/`: environment-specific overlays.
-- `k8s/overlays/*/scenarios.<env>.yaml`: overlay-specific in-cluster scenarios.
-- `k8s/overlays/*/namespace.yaml`: overlay-specific namespaces (`pulse-dev`, `pulse-staging`, `pulse-prod`).
-- `k8s/kustomization.yaml`: compatibility entrypoint (defaults to `overlays/kind`).
-- `k8s/base/dashboards/pulse-runtime-dashboard.json`: dashboard bundled for in-cluster Grafana.
-- `k8s/examples/hpa-pulse.yaml`: sample HPA for pulse deployment.
-- `k8s/examples/pdb-pulse.yaml`: sample stricter PDB (`minAvailable: 2`).
-- `k8s/examples/networkpolicy-pulse.yaml`: sample NetworkPolicy for pulse pod traffic.
-- `k8s/examples/secrets/pulse-secret.<overlay>.example.yaml`: per-overlay Kubernetes secret examples.
-- `k8s/examples/alerts/pulse-prometheusrule.<overlay>.yaml`: per-overlay PrometheusRule alert manifests.
-- `k8s/examples/image-digests.example.yaml`: digest pinning snippet (`image@sha256`) for overlays.
-- `docs/adr/README.md`: architecture decision records (ADRs).
-- `docs/architecture-decisions.md`: ADR index pointer for compatibility.
-- `CHANGELOG.md`: versioned release notes.
-- `docs/compatibility.md`: semantic versioning and compatibility policy.
-- `docs/benchmarks.md`: measured benchmark results (environment, throughput, latency, error, resource snapshot).
-- `docs/operational-safety.md`: shutdown, retry, DLQ, and queue safety behavior.
-- `docs/runbook.md`: incident response and on-call checklist.
-- `docs/runbook-drill-2026-03-03.md`: runbook drill evidence (commands + outputs).
-- `docs/slo-alerts.md`: SLO draft and alert suggestions.
-- `docs/testing-plan.md`: test strategy.
-- `docs/pod-security-baseline.md`: Kubernetes pod security baseline and control mapping.
-- `docs/reliability-testing.md`: soak/chaos reliability test workflow and acceptance criteria.
-- `docs/rollout-plan.md`: staged rollout plan.
-
-## Prerequisites
-
-- Rust toolchain (edition 2024; `cargo`).
-- `protoc` installed locally.
-- Docker + Docker Compose.
-- (Optional) kind + kubectl for Kubernetes deployment.
-- A target gRPC service (example scenarios use `account.v1.AccountService`).
-
-## Release Discipline
-
-- Release notes are tracked in `CHANGELOG.md`.
-- Compatibility expectations are defined in `docs/compatibility.md`.
-- Create semantic version tag:
+The demo is self-contained. One command quietly prepares the containers, then draws a
+two-replica topology and renders a chronological timestamped event ledger from the real
+Pulse and target logs. It shows which node became the fenced scheduler, which node consumed each
+Kafka partition/offset, where the gRPC failure occurred, when it occurred, and how it
+became measurement data without a load retry. Kafka contracts and per-node metrics then
+verify durable settlement, mergeable aggregation, and duplicate-result publication. It
+does not contact an external target or require the reviewer to operate Kafka and Redis.
 
 ```bash
-make release-tag VERSION=0.1.0
+make demo
 ```
 
-- Push semantic version tag:
+Cold image downloads can take a few minutes, but their output is captured under
+`artifacts/demo/` instead of obscuring the system story. On success, the terminal shows
+a compact evidence timeline like:
+
+```text
+TOPOLOGY   two eligible Pulse replicas, Redis elects exactly one scheduler
+
+  pulse-demo-a  <== jobs/results ==> KAFKA <== jobs/results ==> pulse-demo-b
+       +<== leader fence / ledger / leases / aggregate ==> REDIS <==+
+        \--------------- unary gRPC --> TARGET <------------------/
+
+05:31:00.484Z  +08.292s  TARGET ERR grpc-target   DemoService/Echo returned UNAVAILABLE
+05:31:00.485Z  +08.293s  MEASURE   pulse-demo-b  classified target_status:Unavailable
+FAILURE    05:31:00.484Z..05:31:01.987Z at grpc-target / DemoService/Echo
+JOBS       Kafka records=3, logical jobs=3, identical copies=0
+RESULTS    Kafka records=3, logical results=3, identical copies=0
+SUMMARIES  Kafka records=..., logical summaries=2, identical copies=...
+SETTLE     logical jobs=3, physical deliveries=..., source commits=..., uncommitted=0
+POLICY     target failures caused automatic retries=0 and DLQ records=0
+RECOVERY   aggregate duplicate counter 0 -> 1 [ok]
+DEDUP      duplicate result publication created no logical summary/revision
+PASS       real target traffic, durable settlement and failure semantics verified
+```
+
+The stack remains available for inspection:
+
+- Pulse A readiness/metrics: <http://127.0.0.1:29090/health/ready>,
+  <http://127.0.0.1:29090/metrics>
+- Pulse B readiness/metrics: <http://127.0.0.1:29093/health/ready>,
+  <http://127.0.0.1:29093/metrics>
+- Prometheus: <http://127.0.0.1:29091>
+- gRPC fixture: `127.0.0.1:25051` (`pulse.demo.v1.DemoService/Echo`)
+- Kafka: `127.0.0.1:29092`
+- Redis: `127.0.0.1:26379`
+
+The machine-readable proof is retained under `artifacts/demo/`, including the raw
+timestamped runtime log, parsed event ledger, logical and physical Kafka
+job/result/summary contracts, both readiness snapshots, aggregator-group offsets,
+duplicate-injection counters, pre/post-injection summary snapshots, and separate per-node Prometheus
+snapshots. Worker placement is
+reported as observed log evidence, it is intentionally not claimed as a field in the
+version 2 Kafka result contract.
 
 ```bash
-make release-tag-push VERSION=0.1.0
+make demo-down
 ```
 
-## Build descriptor set
+Demo prerequisites are Docker with Compose, Python 3, and `curl`, Rust and `protoc` run
+inside the image build. Contributors can run `make doctor` to verify the pinned Rust
+1.88.0 toolchain (including rust-analyzer) and local `protoc` as well.
+The first image build can take a few minutes. `make demo` uses the fixed
+`pulse-demo` Compose project and clears only that demo's volumes before the run. Before
+creating either Compose network, Pulse deterministically selects an unused RFC1918 `/24`
+that does not overlap existing Docker networks or host routes, and reuses the assigned
+subnet while the project is running. This also works when Docker's default address pool
+is exhausted. Set `PULSE_DOCKER_SUBNET` explicitly to override the selection.
 
-Pulse dynamic gRPC uses a compiled `FileDescriptorSet`.
+## Why the failure model matters
 
-Default:
+- Redis coordination APIs return typed acquired/busy/completed/follower/error outcomes,
+  dependency failure is never interpreted as duplicate, not-due, or success.
+- Execution claims, renewals, completion, and release are atomic owner-checked Lua
+  operations with lease-expiry recovery. Local validity is anchored before each Redis
+  request, so slow responses consume rather than extend the lease budget.
+- Scheduler windows and slices have deterministic identities, a Redis dispatch ledger
+  advances only after every Kafka publication is acknowledged.
+- Leadership has an opaque owner token and monotonic fence, stale leaders cannot mutate
+  dispatch state after failover.
+- Source offsets use broker-acknowledged synchronous commits only after a durable
+  terminal disposition.
+- Target gRPC status, transport failure, and deadline are measurements, not automatic
+  whole-slice retries.
+- Classified Pulse infrastructure failures publish attempt N+1 to the Kafka jobs topic
+  with a deterministic identity and persisted `not_before_unix_ms`, attempt N is
+  committable only after that retry and its Redis terminal state are acknowledged.
+- Kafka polling is separated from settlement backoff by a bounded handoff queue, task
+  sets are continuously reaped and shutdown drain is finite.
+- Result aggregation and outbox maintenance have the same fail-stop Kafka polling
+  envelope, leaving an uncertain result offset unsettled for duplicate-safe recovery.
+- Fractional rates, including `0.1` scenarios/second, use monotonic time. Cross-slice
+  concurrency uses quotient/remainder and never exceeds the configured global value.
+- Per-slice results carry mergeable latency buckets. Duplicate/out-of-order aggregation
+  durably merges them in Redis, ignores repeated deterministic execution identities,
+  and publishes revisioned run summaries through a recoverable Redis outbox instead of
+  averaging quantiles.
+
+The normative invariants and crash-boundary diagram are in
+[`ADR-0007`](docs/adr/ADR-0007-failure-model-and-delivery-semantics.md).
+
+## Job lifecycle
+
+```text
+fenced scheduler
+  -> prepare/resume deterministic Redis dispatch window
+  -> publish only unacknowledged Kafka slices
+  -> acknowledge each slice in the owner-checked ledger
+
+Kafka source record
+  -> validate contract (poison/permanent failure -> acknowledged DLQ)
+  -> acquire renewable Redis execution lease
+  -> run bounded scenario traffic
+  -> publish deterministic result
+  -> record owner-checked terminal outcome
+  -> synchronously commit source offset
+
+Kafka result record
+  -> validate contract (poison/permanent failure -> acknowledged DLQ)
+  -> atomically deduplicate and merge counts/histogram buckets in Redis
+  -> synchronously commit result offset after durable acceptance
+  -> publish complete/timed-out/late-complete summary revision from Redis outbox
+  -> acknowledge exactly that outbox revision
+```
+
+Kafka publication and Redis acknowledgement are not one transaction. If Kafka accepts
+an output and the process dies before Redis completion or source commit, redelivery can
+republish the same deterministic output. That ambiguity prefers duplicates over loss,
+the aggregator is duplicate tolerant.
+
+## Failure semantics
+
+| Failure point                                  | Recovery behavior                                                  |                         Offset committed? |                Duplicate possible? |
+| ---------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------: | ---------------------------------: |
+| Redis unavailable during claim                 | fail-stop, Kafka recovers unsettled source                         |                                        No |                 no target call yet |
+| Execution lease already held                   | retain record in place, recheck terminal/expiry within poll budget | only after terminal verification/recovery |             no while lease is live |
+| Crash after lease acquisition                  | lease expires, redelivery recovers                                 |                                        No |                                Yes |
+| Stale worker resumes                           | owner check rejects renew/complete/release                         |                                        No |        recovery worker may execute |
+| Target returns non-OK                          | publish failed measurement, do not replay slice                    |                      After durable result |                 no automatic retry |
+| Request deadline                               | publish timeout measurement                                        |                      After durable result |                 no automatic retry |
+| Result publication fails                       | bounded retry, then retain unsettled source                        |                                        No |              Yes on later recovery |
+| DLQ publication fails                          | retain poison/permanent source                                     |                                        No |                 DLQ may be retried |
+| Output acked, Redis completion fails           | redelivery may republish same event ID                             |                                        No |        Yes, ignored by aggregation |
+| Redis completion succeeds, source commit fails | verify durable terminal state on redelivery                        |                        no proof of commit |             no target re-execution |
+| Partial scheduler publication                  | resume only ledger-missing deterministic slices                    |                                       n/a |         ambiguous slice may repeat |
+| Leadership lost during dispatch                | local stop plus Redis fence rejection                              |                                       n/a | next leader resumes missing slices |
+| Shutdown during execution                      | stop intake, drain to deadline, leave ambiguity unsettled          |                        terminal work only |                                Yes |
+
+## Implemented runtime
+
+- Rust 2024/Tokio runtime with bounded launch and consumer queues.
+- Scenario chains with shared context, generated/template values, and response
+  extraction.
+- Dynamic unary gRPC from protobuf descriptor sets, service/method startup validation,
+  connect timeout, per-step deadline, and whole-scenario deadline.
+- Fractional token-bucket pacing with explicit optional startup burst.
+- Deterministic Kafka contracts (current version 2) for jobs, results, summaries,
+  failures, and poison payloads.
+- Configurable Kafka poll/session/prefetch, producer acknowledgements/idempotence,
+  timeouts, partition/replication settings, and opt-in topic management.
+- Redis `TIME`-based leader leases, monotonic fencing, recoverable dispatch ledgers,
+  renewable execution leases, retained terminal outcomes, and durable run aggregation.
+- A dedicated result consumer merges deterministic slices, persists deadlines and a
+  bounded summary outbox, and publishes revisioned `ScenarioRunSummaryEvent` records.
+- Explicit `ResultPublished`, `RetryPublished`, `DeadLetterPublished`,
+  `DuplicateCompleted`, plus non-terminal `ExecutionLeaseBusy` and `RetryLater`
+  dispositions. Busy rebalance redeliveries stay at the processor head until Redis
+  exposes completion or lease recovery, dependency ambiguity still fails closed.
+- Separate `/health/live`, `/health/ready`, and `/metrics` routes.
+- Prometheus metrics, Grafana assets, Kubernetes application/demo separation, CI,
+  supply-chain checks, ADRs, runbooks, and evidence policy.
+
+## Dry-run and scenario shape
+
+Validate the repository scenario and print the exact slice rate/concurrency plan without
+starting Kafka/Redis or generating target traffic:
 
 ```bash
-make proto-descriptor
+make validate-config
 ```
 
-Output:
+The same mode is available directly with `PULSE_DRY_RUN=true`. Non-local targets must
+be exactly allowlisted with `PULSE_TARGET_ALLOWLIST`, the broad
+`PULSE_ACKNOWLEDGE_NON_LOCAL_TARGETS=true` escape hatch must be a conscious operator
+choice.
 
-- `descriptors/services.pb`
-
-Multiple services/protos:
-
-```bash
-make proto-descriptor \
-  PROTO_FILES="src/account.proto ../payments/proto/payment.proto" \
-  PROTO_SRC_DIRS="src ../payments/proto" \
-  PROTO_IMPORT_DIRS="/usr/include ../payments/proto"
-```
-
-## Scenario configuration (YAML)
-
-Scenario source is loaded from:
-
-- `PULSE_SCENARIOS_FILE` if set.
-- Otherwise `./scenarios.yaml`.
-
-Key fields:
-
-- `scenarios_per_sec`: scenario starts per second (not requests per second).
-- `max_concurrency`: max in-flight scenario executions.
-- `duration`: load window (`Ns`, `Nm`, `Nh`).
-- `repeat`:
-  - `type: once`
-  - `type: every` + `interval: Ns|Nm|Nh`
-- `partition_key_strategy`: `execution_key` (default) or `scenario_id`.
-
-gRPC step fields:
-
-- `protocol: grpc`
-- `service`, `method`
-- Optional step `endpoint` (overrides scenario endpoint)
-- One request form:
-  - `request_fields` (JSON object; encoded using descriptor schema)
-  - `request_base64` (raw protobuf bytes in base64; can be templated)
-- Optional `extract` map (`ctx_key: response.path`)
-- Optional `response_payload_context_key` (stores raw response bytes as base64)
-
-Example:
+A scenario-start rate is not raw request rate: each scenario can contain several unary
+steps.
 
 ```yaml
 version: 1
 scenarios:
-  - name: CreateGetDelete
-    endpoint: http://host.docker.internal:8080
-    scenarios_per_sec: 5
-    max_concurrency: 20
-    duration: 30s
+  - name: LocalUnaryDemo
+    endpoint: http://grpc-target:50051
+    scenarios_per_sec: 0.5
+    max_concurrency: 2
+    duration: 10s
     repeat:
-      type: every
-      interval: 1m
+      type: once
+    partition_key_strategy: execution_key
     steps:
       - protocol: grpc
-        service: account.v1.AccountService
-        method: CreateAccount
+        service: pulse.demo.v1.DemoService
+        method: Echo
         request_fields:
-          phone: "${gen.phone}"
+          message: "${gen.uuid}"
         extract:
-          user_id: "account.id"
-      - protocol: grpc
-        method: GetAccount
-        service: account.v1.AccountService
-        request_fields:
-          id: "${ctx.user_id}"
-      - protocol: grpc
-        service: account.v1.AccountService
-        method: DeleteAccount
-        request_fields:
-          id: "${ctx.user_id}"
+          echoed_message: message
 ```
 
-### Template expressions
+Supported expressions include `${ctx.key}`, `${gen.uuid}`, `${gen.phone}`, and
+`${gen.int:1:100}`. See [`demo/scenarios.yaml`](demo/scenarios.yaml) for the executable
+fixture and [`docs/configuration.md`](docs/configuration.md) for all environment
+variables and validation relationships.
 
-Supported placeholders:
+## Health, shutdown, and operations
 
-- Context:
-  - `${ctx.user_id}`
-- Generators:
-  - `${gen.uuid}`
-  - `${gen.phone}`
-  - `${gen.int:1:100}`
+Readiness requires parsed configuration, reachable Redis, Kafka producers and consumer,
+initialized scenarios, and an accepting worker. It becomes false as soon as shutdown
+drain begins. Liveness remains process/event-loop oriented so a dependency outage does
+not cause a restart loop by itself.
 
-## Run locally (binary)
+Shutdown becomes unready, stops leadership/scheduling/intake, keeps bounded work alive
+for terminal settlement, drains to the configured deadline, relinquishes owned leases
+where safe, and leaves ambiguous records uncommitted for redelivery. Kubernetes
+termination grace exceeds that application deadline.
 
-Start dependencies yourself (Kafka/Redis), then run:
+Operational procedures:
+
+- [`docs/operational-safety.md`](docs/operational-safety.md)
+- [`docs/runbook.md`](docs/runbook.md)
+- [`docs/dlq-operations.md`](docs/dlq-operations.md)
+- [`docs/slo-alerts.md`](docs/slo-alerts.md)
+
+## Kubernetes deployment boundary
+
+- `k8s/base`: Pulse application resources only.
+- `k8s/demo`: deterministic gRPC fixture plus explicit single-node
+  Kafka/Redis/Prometheus/Grafana resources.
+- `k8s/overlays/kind`: self-contained local exercise, includes application, target,
+  and demo dependencies with recurring healthy and expected-failure traffic.
+- `k8s/overlays/staging` and `prod`: app-only examples requiring externally managed
+  dependencies and monitoring.
 
 ```bash
-make start
+make k8s-validate
 ```
 
-Common overrides:
+Production-oriented overlays disable topic management, require a Redis secret file,
+and use an explicit image version placeholder. Replace it with a reviewed digest. The
+single-node demo resources are not a production Kafka/Redis architecture. See
+[`k8s/README.md`](k8s/README.md).
+
+## Verification
 
 ```bash
-PULSE_KAFKA_BROKERS=localhost:9092 \
-PULSE_REDIS_URL=redis://127.0.0.1:6379 \
-PULSE_SCENARIOS_FILE=./scenarios.yaml \
-PULSE_GRPC_DESCRIPTOR_SET=./descriptors/services.pb \
-make start
+make ci
+make test-integration-compose   # requires a working Docker daemon
+make supply-chain-check         # builds/scans both images and writes SBOM/scan artifacts
+make release-validate
 ```
 
-## Run with Docker Compose
+`make ci` runs formatting, Clippy with warnings denied, all Rust targets/features,
+deterministic Tokio and contract tests, the runtime smoke benchmark, Compose syntax,
+descriptor generation, release consistency, and every Kubernetes render. Compose-backed
+Kafka/Redis tests remain separate because they start services.
 
-Compose starts Kafka + Redis + Pulse:
+CI throughput thresholds are smoke checks on noisy runners, not capacity evidence.
+Historical measurements are retained without inventing improved numbers in
+[`docs/benchmarks.md`](docs/benchmarks.md), new claims must follow
+[`docs/evidence-policy.md`](docs/evidence-policy.md).
+
+## Verified limitations
+
+- Exactly-once target execution is impossible in the current architecture, duplicate
+  external side effects remain possible at cross-system crash boundaries.
+- Every leased terminal send attempt is Redis owner-checked immediately before Kafka
+  publication, but that check and broker acknowledgement are not atomic. A process
+  pause in the remaining interval can publish a deterministic stale output, Redis
+  prevents its source commit, aggregation deduplicates results, and an orphan retry can
+  add target traffic. Eliminating this requires a fenced execution outbox.
+- Summary publication is at least once: a crash after Kafka acknowledges a summary but
+  before Redis acknowledges its outbox revision may republish that deterministic
+  `event_id`/revision. Summary consumers must deduplicate those fields.
+- There is no separate delayed-retry topic or broker-side delay. Retry intent and its
+  `not_before_unix_ms` are durable in the normal Kafka jobs topic, while bounded local
+  deferral can head-of-line block one processor (the independent bounded consumer pump
+  continues polling until its handoff queue is full).
+- Dynamic gRPC supports plaintext unary HTTP/2 targets (`http://`) only. This build
+  rejects `https://` at startup because tonic TLS transport is not enabled. HTTP,
+  WebSocket, and gRPC streaming are intentionally out of scope while failure semantics
+  are being hardened.
+- Kafka SASL/TLS configuration and full Redis TLS certificate/auth support are not yet
+  exposed. Redis uses a single configured endpoint rather than native Cluster/Sentinel
+  discovery, though multi-key Lua keys are hash-tag compatible. Dynamic gRPC has no
+  TLS, custom-CA, or mTLS configuration path, use it only on a trusted network.
+- Retry age is exported without identity labels as
+  `pulse_worker_retry_job_age_seconds`, aggregate state remains bounded outcome counters
+  rather than a per-run gauge. Use Kafka lag and the durable Redis outbox for a specific
+  run, never add unbounded `run_id` labels.
+- Kafka assignment epochs fence buffered commits across a real Compose-broker
+  rebalance, and the test proves a fresh group member receives and commits the
+  redelivery. Full-runtime long-scenario rebalances, managed Kafka variants, and
+  prolonged rebalance/chaos runs remain environment-specific evidence requirements.
+- Readiness does not yet expose per-scenario active-window fingerprint conflicts. A
+  changed plan is rejected rather than mixed into an existing window, operators must
+  restore the prior plan to finish that window using the runbook procedure.
+- The kind/Compose brokers and Redis are deterministic demo fixtures, not HA or durable
+  production dependencies.
+
+## Documentation map
+
+- [Architecture Decision Records](docs/adr/README.md): delivery, leases, fencing,
+  dispatch recovery, retries, aggregation, rate distribution, and shutdown.
+- [Reliability testing](docs/reliability-testing.md): deterministic/fault test matrix
+  and data-plane chaos criteria.
+- [Compatibility policy](docs/compatibility.md): scenario/Kafka/config/metric surfaces.
+- [Rollout plan](docs/rollout-plan.md): fail-closed staged review gates.
+- [Evidence policy](docs/evidence-policy.md): required raw data and claim levels.
+
+## Release consistency
+
+The crate/lockfile and deployment examples identify the next release as `0.2.0`,
+existing tags `v0.1.0` through `v0.1.2` are recorded in the changelog. Rust 1.88.0 is
+pinned for local tooling, rust-analyzer, CI, and Docker.
+Before a future tag, update the crate, lockfile, and changelog together:
 
 ```bash
-make docker-up
-make docker-logs
+make release-validate VERSION=0.2.0
+make release-tag VERSION=0.2.0
 ```
-
-Notes:
-
-- Compose uses `scenarios.yaml` mounted to `/app/scenarios.yaml`.
-- Default target endpoint is `http://host.docker.internal:8080`.
-- Ensure your target gRPC service is reachable from the host at that address.
-- Prometheus/Grafana history is stored in named Docker volumes:
-  - `prometheus_data` -> `/prometheus`
-  - `grafana_data` -> `/var/lib/grafana`
-- Compose also starts:
-  - Prometheus: `http://localhost:19091`
-  - Grafana: `http://localhost:13000` (default `admin/admin`)
-- Grafana auto-provisions:
-  - Prometheus datasource
-  - `Pulse Runtime Metrics` dashboard from `ops/grafana/dashboards/pulse-runtime-dashboard.json`
-
-Stop:
-
-```bash
-make docker-down
-```
-
-Reset observability history (destructive):
-
-```bash
-docker compose down -v
-```
-
-## Supply-chain outputs
-
-`make supply-chain-check` writes artifacts to:
-
-- `artifacts/security/trivy-image-report.json`
-- `artifacts/security/pulse-image-sbom.spdx.json`
-
-## Run on Kubernetes (kind)
-
-Deploy with local image load:
-
-```bash
-make k8s-deploy-kind
-```
-
-Deploy explicit overlay:
-
-```bash
-make k8s-deploy K8S_OVERLAY=kind
-make k8s-deploy K8S_OVERLAY=staging
-make k8s-deploy K8S_OVERLAY=prod
-```
-
-Useful checks:
-
-```bash
-make k8s-status
-make k8s-logs
-make k8s-kafka-topics
-make k8s-soak-chaos K8S_OVERLAY=kind SOAK_DURATION_SEC=1800 SOAK_CHAOS_PLAN=kafka,redis,pulse
-make k8s-check-performance K8S_OVERLAY=kind PERF_WINDOW=30m
-```
-
-`k8s-check-performance` writes both:
-- `artifacts/reliability/perf-gate-<timestamp>.log`
-- `artifacts/reliability/perf-gate-<timestamp>.json`
-- appends cumulative history to `artifacts/reliability/perf-history.jsonl`
-- generates visual markdown report `artifacts/reliability/perf-report-<timestamp>.md`
-- generates/update static history page `artifacts/reliability/performance-history.html`
-
-Notes:
-
-- Kubernetes scenarios are overlay-specific:
-  - `k8s/overlays/kind/scenarios.kind.yaml`
-  - `k8s/overlays/staging/scenarios.staging.yaml`
-  - `k8s/overlays/prod/scenarios.prod.yaml`
-- Default namespace/context mapping:
-  - `kind -> pulse-dev / kind-account`
-  - `staging -> pulse-staging / kind-account`
-  - `prod -> pulse-prod / kind-account`
-- Make enforces overlay/context/namespace alignment by default.
-  - Set `ALLOW_K8S_ENV_OVERRIDE=true` only for intentional overrides.
-- Example target endpoint is cross-namespace to Account service: `http://account.account:8080`.
-- Deployment exposes `/metrics` on port `9090` through `Service/pulse`.
-- Pulse workloads run as non-root and include startup/readiness/liveness probes.
-- Secret-based sensitive config path is supported:
-  - `Secret/pulse-secrets` is mounted to `/var/run/secrets/pulse` (optional).
-  - `PULSE_REDIS_URL_FILE=/var/run/secrets/pulse/PULSE_REDIS_URL` is set in deployment.
-  - If `PULSE_REDIS_URL` is not set, Pulse reads Redis URL from that file path.
-- `make k8s-deploy` applies the selected overlay (`k8s/overlays/<env>`) and provisions a dedicated observability stack in that overlay namespace:
-  - `Deployment/Service prometheus` using `k8s/base/prometheus.yaml`.
-  - `Deployment/Service grafana` using `k8s/base/grafana.yaml`.
-  - `PersistentVolumeClaim prometheus-data` and `PersistentVolumeClaim grafana-data` for durable history in-cluster.
-  - ConfigMap `pulse-runtime-dashboard` is generated by kustomize from `k8s/base/dashboards/pulse-runtime-dashboard.json` and mounted into Grafana.
-- Optional hardening examples:
-  - `make k8s-apply-hpa-example` to apply `k8s/examples/hpa-pulse.yaml` (requires metrics-server).
-  - `make k8s-apply-pdb-example` to apply stricter disruption policy (`minAvailable: 2`).
-  - `make k8s-apply-networkpolicy-example` to apply runtime traffic policy for pulse pods.
-  - `make k8s-show-digest-pinning-example` to print digest pinning snippet for overlay `kustomization.yaml`.
-  - `make k8s-show-secret-example K8S_OVERLAY=<env>` to print per-overlay secret example.
-  - `make k8s-apply-secret-example K8S_OVERLAY=<env>` to apply per-overlay secret example.
-  - `make k8s-apply-prometheusrule K8S_OVERLAY=<env>` to apply per-overlay PrometheusRule (requires `prometheusrules.monitoring.coreos.com` CRD).
-  - `make k8s-delete-prometheusrule K8S_OVERLAY=<env>` to remove overlay PrometheusRule.
-
-Access examples:
-
-```bash
-kubectl --context kind-account -n pulse-dev port-forward svc/prometheus 9090:9090
-kubectl --context kind-account -n pulse-dev port-forward svc/grafana 3001:3000
-```
-
-Provision `pulse-secrets` example (overlay-aware):
-
-```bash
-make k8s-show-secret-example K8S_OVERLAY=kind
-make k8s-apply-secret-example K8S_OVERLAY=kind
-```
-
-Show digest-pinning snippet (`image@sha256`) and copy into `k8s/overlays/staging/kustomization.yaml` or `k8s/overlays/prod/kustomization.yaml`:
-
-```bash
-make k8s-show-digest-pinning-example
-```
-
-If metrics-server is not healthy on kind:
-
-```bash
-make k8s-fix-metrics-server
-```
-
-HPA on kind requires metrics-server. If `kubectl top` fails or HPA shows unknown metrics, run `make k8s-fix-metrics-server` first.
-
-## Metrics and results
-
-Per scenario run:
-
-- Total/success/failure counts.
-- Scenario latency p50/p95/p99.
-- Per-step latency p50/p95/p99 and success/failure.
-- Error breakdown by kind.
-
-Outputs:
-
-- CLI summary in worker logs.
-- Structured result message to Kafka `PULSE_KAFKA_RESULTS_TOPIC`.
-
-## Configuration reference
-
-Primary environment variables:
-
-- `PULSE_KAFKA_BROKERS` (default: `localhost:9092`)
-- `PULSE_KAFKA_JOBS_TOPIC` (default: `pulse.scenario.jobs`)
-- `PULSE_KAFKA_RESULTS_TOPIC` (default: `pulse.scenario.results`)
-- `PULSE_KAFKA_DLQ_TOPIC` (default: `pulse.scenario.dlq`)
-- `PULSE_KAFKA_GROUP_ID` (default: `pulse-workers`)
-- `PULSE_REDIS_URL` (default: `redis://127.0.0.1:6379`)
-- `PULSE_REDIS_URL_FILE` (optional file path fallback for `PULSE_REDIS_URL`)
-- `PULSE_REDIS_LEADER_KEY` (default: `pulse:leader`)
-- `PULSE_REDIS_SCHEDULE_PREFIX` (default: `pulse:schedule`)
-- `PULSE_REDIS_IDEMPOTENCY_PREFIX` (default: `pulse:dedupe`)
-- `PULSE_NODE_ID` (default: `node-<pid>`)
-- `PULSE_LEADER_LOCK_TTL_MS` (default: `10000`)
-- `PULSE_LEADER_RENEW_INTERVAL_MS` (default: `3000`)
-- `PULSE_SCHEDULER_TICK_INTERVAL_MS` (default: `500`)
-- `PULSE_QUEUE_CAPACITY` (default: `1024`)
-- `PULSE_WORKER_MAX_RETRIES` (default: `2`)
-- `PULSE_WORKER_RETRY_BASE_DELAY_MS` (default: `500`)
-- `PULSE_ENDPOINT` (default: `http://127.0.0.1:8080`)
-- `PULSE_SCENARIOS_FILE` (optional)
-- `PULSE_GRPC_DESCRIPTOR_SET` (required for dynamic gRPC scenarios)
-- `PULSE_METRICS_ENABLED` (default: `true`)
-- `PULSE_METRICS_BIND` (default: `0.0.0.0:9090`)
-
-Prometheus scrape endpoint:
-
-- `GET /metrics` on `PULSE_METRICS_BIND`
-- Docker Compose host mapping: `http://localhost:19090/metrics`
-
-Grafana sample dashboard:
-
-- `ops/grafana/dashboards/pulse-runtime-dashboard.json`
-
-## Development
-
-```bash
-make fmt
-make check
-cargo test
-make bench
-make ci-check
-```
-
-Docker-backed integration tests (Redis + Kafka):
-
-```bash
-make test-integration-compose
-```
-
-Optional overrides:
-
-```bash
-make test-integration-compose \
-  TEST_KAFKA_BROKERS=127.0.0.1:19092 \
-  TEST_REDIS_URL=redis://127.0.0.1:16379
-```
-
-## Troubleshooting
-
-- `invalid yaml: unknown field ...`:
-  - Container likely running stale binary/image; rebuild and recreate.
-- `dynamic gRPC gateway is not configured for endpoint ...`:
-  - Step endpoint exists in YAML but gateway was not initialized (check descriptor + endpoint config).
-- `connect failed: transport error`:
-  - Endpoint not reachable from runtime environment (host vs container vs cluster DNS mismatch).
-- `metrics-server 0/1` in kind:
-  - Run `make k8s-fix-metrics-server`.
-
-## Roadmap
-
-Short-term:
-
-- Implement HTTP step adapter.
-- Add per-step retry policies (currently worker-level retry).
-- Add DLQ replay tooling.
-
-Medium-term:
-
-- Implement WebSocket step adapter.
-- Add gRPC streaming support (client/server/bidi).
 
 ## License
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[MIT](LICENSE)
