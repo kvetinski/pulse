@@ -34,26 +34,45 @@ def _run_json(command: list[str]) -> object | None:
         return None
 
 
-def _ipv4_networks(values: Iterable[str]) -> list[ipaddress.IPv4Network]:
+def _ipv4_networks(values: Iterable[object]) -> list[ipaddress.IPv4Network]:
     networks: list[ipaddress.IPv4Network] = []
     for value in values:
+        if not isinstance(value, str):
+            continue
         try:
             network = ipaddress.ip_network(value, strict=False)
-        except ValueError:
+        except (TypeError, ValueError):
             continue
         if isinstance(network, ipaddress.IPv4Network):
             networks.append(network)
     return networks
 
 
+def _docker_subnets(payload: object) -> list[ipaddress.IPv4Network]:
+    if not isinstance(payload, list):
+        return []
+
+    values: list[object] = []
+    for network in payload:
+        if not isinstance(network, dict):
+            continue
+        ipam = network.get("IPAM")
+        if not isinstance(ipam, dict):
+            continue
+        configs = ipam.get("Config")
+        if not isinstance(configs, list):
+            continue
+        for config in configs:
+            if isinstance(config, dict):
+                values.append(config.get("Subnet"))
+    return _ipv4_networks(values)
+
+
 def existing_network_subnet(network_name: str) -> ipaddress.IPv4Network | None:
     payload = _run_json(["docker", "network", "inspect", network_name])
     if not isinstance(payload, list) or not payload:
         return None
-    configs = payload[0].get("IPAM", {}).get("Config", [])
-    subnets = _ipv4_networks(
-        config.get("Subnet", "") for config in configs if isinstance(config, dict)
-    )
+    subnets = _docker_subnets(payload[:1])
     return subnets[0] if subnets else None
 
 
@@ -70,14 +89,7 @@ def docker_networks() -> list[ipaddress.IPv4Network]:
     payload = _run_json(["docker", "network", "inspect", *network_ids])
     if not isinstance(payload, list):
         raise RuntimeError("Docker returned invalid network inspection data")
-    values: list[str] = []
-    for network in payload:
-        if not isinstance(network, dict):
-            continue
-        for config in network.get("IPAM", {}).get("Config", []):
-            if isinstance(config, dict):
-                values.append(config.get("Subnet", ""))
-    return _ipv4_networks(values)
+    return _docker_subnets(payload)
 
 
 def host_routes() -> list[ipaddress.IPv4Network]:

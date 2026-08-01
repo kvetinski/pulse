@@ -14,6 +14,36 @@ SPEC.loader.exec_module(SELECTOR)
 
 
 class SelectSubnetTests(unittest.TestCase):
+    def test_docker_payload_treats_null_ipam_and_config_as_empty(self) -> None:
+        payload = [
+            {"Name": "host", "IPAM": {"Config": None}},
+            {"Name": "none", "IPAM": None},
+            {"Name": "malformed", "IPAM": {"Config": {}}},
+            {
+                "Name": "bridge",
+                "IPAM": {
+                    "Config": [
+                        None,
+                        {"Subnet": None},
+                        {"Subnet": "172.18.0.0/16"},
+                    ]
+                },
+            },
+        ]
+
+        self.assertEqual(
+            SELECTOR._docker_subnets(payload),
+            [ipaddress.ip_network("172.18.0.0/16")],
+        )
+
+    def test_existing_network_with_null_config_has_no_subnet(self) -> None:
+        original = SELECTOR._run_json
+        SELECTOR._run_json = lambda _command: [{"IPAM": {"Config": None}}]
+        try:
+            self.assertIsNone(SELECTOR.existing_network_subnet("host"))
+        finally:
+            SELECTOR._run_json = original
+
     def test_prefers_deterministic_high_private_subnet(self) -> None:
         selected = SELECTOR.select_subnet([])
         self.assertEqual(selected, ipaddress.ip_network("172.31.255.0/24"))
