@@ -1,5 +1,10 @@
 # Runbook Drill - 2026-03-03
 
+> Historical evidence: this drill predates the failure-aware runtime and the
+> application/demo Kubernetes split. Its captured output is retained unchanged and
+> must not be treated as validation of the current manifests. Run `make k8s-validate`
+> for current render checks; dependency restart commands now apply only to kind/demo.
+
 ## Goal
 
 Validate operational guardrails introduced for overlay-based deployments and capture command/output examples tied to `docs/runbook.md`.
