@@ -10,6 +10,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   rust:
     name: Rust Quality Gates
@@ -17,7 +20,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Activate pinned Rust toolchain
+        run: |
+          rustc --version --verbose
+          cargo --version
+          rust-analyzer --version
 
       - name: Install system dependencies
         run: |
@@ -34,29 +43,19 @@ jobs:
             zlib1g-dev \
             libzstd-dev
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      - name: Run quality gates
-        run: make ci-check
+      - name: Validate release metadata
+        run: make release-validate
 
       - name: Install kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
         with:
           version: v1.31.0
 
-      - name: Validate Kubernetes manifests
-        run: |
-          kubectl kustomize k8s > /dev/null
-          kubectl kustomize k8s/overlays/kind > /dev/null
-          kubectl kustomize k8s/overlays/staging > /dev/null
-          kubectl kustomize k8s/overlays/prod > /dev/null
-          kubectl kustomize k8s/examples/alerts > /dev/null
+      - name: Run quality and manifest gates
+        run: make ci
 
       - name: Generate performance report artifacts (CI fixture)
         run: |
@@ -67,7 +66,7 @@ jobs:
 
       - name: Upload performance artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: perf-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -88,7 +87,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Activate pinned Rust toolchain
+        run: rustc --version --verbose
 
       - name: Install system dependencies
         run: |
@@ -105,11 +107,8 @@ jobs:
             zlib1g-dev \
             libzstd-dev
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run compose-backed integration tests
         run: make test-integration-compose
@@ -125,7 +124,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Activate pinned Rust toolchain
+        run: rustc --version --verbose
 
       - name: Install system dependencies
         run: |
@@ -142,23 +144,22 @@ jobs:
             zlib1g-dev \
             libzstd-dev
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run supply-chain checks
         run: make supply-chain-check
 
       - name: Upload supply-chain artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: supply-chain-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             artifacts/security/trivy-image-report.json
             artifacts/security/pulse-image-sbom.spdx.json
+            artifacts/security/trivy-demo-target-report.json
+            artifacts/security/pulse-demo-target-sbom.spdx.json
           if-no-files-found: warn
           retention-days: 14
 
@@ -169,7 +170,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Build image
         run: docker build -t pulse:ci .
+
+      - name: Validate image descriptor and dry-run startup
+        run: |
+          docker run --rm \
+            -e PULSE_DRY_RUN=true \
+            -e PULSE_SCENARIOS_FILE=/app/scenarios.yaml \
+            -e PULSE_GRPC_DESCRIPTOR_SET=/app/descriptors/services.pb \
+            -e PULSE_ENDPOINT=http://host.docker.internal:8080 \
+            -e PULSE_TARGET_ALLOWLIST=host.docker.internal \
+            pulse:ci
+
+      - name: Build self-contained demo images
+        run: |
+          docker build -f demo/Dockerfile.pulse -t pulse-demo:ci .
+          docker build -f demo/grpc-target/Dockerfile -t pulse-demo-target:ci .
