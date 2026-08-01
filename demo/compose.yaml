@@ -1,0 +1,210 @@
+name: pulse-demo
+
+x-pulse-environment: &pulse-environment
+  RUST_LOG: info
+  PULSE_ENDPOINT: http://grpc-target:50051
+  PULSE_TARGET_ALLOWLIST: grpc-target
+  PULSE_SCENARIOS_FILE: /app/scenarios.yaml
+  PULSE_GRPC_DESCRIPTOR_SET: /app/descriptors/demo.pb
+  PULSE_GRPC_CONNECT_TIMEOUT_MS: "2000"
+  PULSE_GRPC_REQUEST_TIMEOUT_MS: "1000"
+  PULSE_GRPC_SCENARIO_TIMEOUT_MS: "5000"
+  PULSE_MAX_DURATION_MS: "10000"
+  PULSE_MAX_SCENARIOS_PER_SEC: "20"
+  PULSE_MAX_CONCURRENCY: "8"
+  PULSE_KAFKA_BROKERS: kafka:9092
+  PULSE_KAFKA_JOBS_TOPIC: pulse.demo.jobs
+  PULSE_KAFKA_RESULTS_TOPIC: pulse.demo.results
+  PULSE_KAFKA_SUMMARIES_TOPIC: pulse.demo.summaries
+  PULSE_KAFKA_DLQ_TOPIC: pulse.demo.dlq
+  PULSE_KAFKA_GROUP_ID: pulse-demo-workers
+  PULSE_KAFKA_AGGREGATOR_GROUP_ID: pulse-demo-aggregators
+  PULSE_KAFKA_MAX_POLL_INTERVAL_MS: "90000"
+  PULSE_KAFKA_SESSION_TIMEOUT_MS: "10000"
+  PULSE_KAFKA_MESSAGE_TIMEOUT_MS: "5000"
+  PULSE_KAFKA_DELIVERY_TIMEOUT_MS: "5000"
+  PULSE_KAFKA_REQUEST_TIMEOUT_MS: "3000"
+  PULSE_KAFKA_PRODUCER_ACKS: all
+  PULSE_KAFKA_PRODUCER_IDEMPOTENCE: "true"
+  PULSE_KAFKA_TOPIC_MANAGEMENT_ENABLED: "true"
+  PULSE_KAFKA_TOPIC_PARTITIONS: "3"
+  PULSE_KAFKA_TOPIC_REPLICATION_FACTOR: "1"
+  PULSE_KAFKA_PRODUCER_QUEUE_MESSAGES: "128"
+  PULSE_KAFKA_PRODUCER_MESSAGE_MAX_BYTES: "1000000"
+  PULSE_KAFKA_CONSUMER_QUEUE_KBYTES: "1024"
+  PULSE_KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES: "524288"
+  PULSE_KAFKA_CONSUMER_FETCH_MAX_BYTES: "4194304"
+  PULSE_KAFKA_CONSUMER_RECORD_MAX_BYTES: "1000000"
+  PULSE_REDIS_URL: redis://redis:6379
+  PULSE_REDIS_LEADER_KEY: pulse:{demo-coordination}:leader
+  PULSE_REDIS_SCHEDULE_PREFIX: pulse:{demo-coordination}:schedule
+  PULSE_REDIS_IDEMPOTENCY_PREFIX: pulse:demo:execution
+  PULSE_REDIS_AGGREGATION_PREFIX: pulse:demo:aggregation
+  PULSE_AGGREGATION_PARTIAL_TIMEOUT_MS: "20000"
+  PULSE_AGGREGATION_RETENTION_MS: "120000"
+  PULSE_AGGREGATION_SCAN_INTERVAL_MS: "500"
+  PULSE_AGGREGATION_SCAN_BATCH: "32"
+  PULSE_AGGREGATION_MAX_ACTIVE_RUNS: "128"
+  PULSE_AGGREGATION_MAX_ERROR_KINDS: "32"
+  PULSE_LEADER_LOCK_TTL_MS: "9000"
+  PULSE_LEADER_RENEW_INTERVAL_MS: "2000"
+  PULSE_SCHEDULER_TICK_INTERVAL_MS: "200"
+  PULSE_EXECUTION_LEASE_TTL_MS: "20000"
+  PULSE_EXECUTION_LEASE_RENEW_INTERVAL_MS: "5000"
+  PULSE_EXECUTION_TERMINAL_RETENTION_MS: "120000"
+  PULSE_WORKER_MAX_RETRIES: "2"
+  PULSE_WORKER_RETRY_BASE_DELAY_MS: "200"
+  PULSE_WORKER_RETRY_MAX_DELAY_MS: "3000"
+  PULSE_RETRY_QUEUE_CAPACITY: "32"
+  PULSE_STARTUP_DEADLINE_MS: "60000"
+  PULSE_SHUTDOWN_DRAIN_TIMEOUT_MS: "15000"
+  # The two-second deterministic demo explicitly requests its initial token.
+  PULSE_STARTUP_BURST: "1"
+  PULSE_ALLOW_PARTIAL_START: "false"
+  PULSE_ACKNOWLEDGE_NON_LOCAL_TARGETS: "false"
+  PULSE_METRICS_ENABLED: "true"
+  PULSE_METRICS_BIND: 0.0.0.0:9090
+
+x-pulse-service: &pulse-service
+  image: pulse-demo-runtime:local
+  build:
+    context: ..
+    dockerfile: demo/Dockerfile.pulse
+  depends_on:
+    kafka:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    grpc-target:
+      condition: service_healthy
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: ["ALL"]
+  security_opt:
+    - no-new-privileges:true
+  healthcheck:
+    test:
+      - CMD
+      - curl
+      - --fail
+      - --silent
+      - http://127.0.0.1:9090/health/ready
+    interval: 3s
+    timeout: 3s
+    retries: 40
+    start_period: 5s
+
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: "0"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,EXTERNAL://:19092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://127.0.0.1:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "0@localhost:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      # Give both Pulse consumers time to join before the tiny demo workload is assigned.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "1000"
+    ports:
+      - "${PULSE_DEMO_KAFKA_PORT:-29092}:19092"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${PULSE_DEMO_REDIS_PORT:-26379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  grpc-target:
+    build:
+      context: ..
+      dockerfile: demo/grpc-target/Dockerfile
+    environment:
+      PULSE_DEMO_TARGET_BIND: 0.0.0.0:50051
+      PULSE_DEMO_TARGET_INSTANCE: local-fixture-1
+    ports:
+      - "${PULSE_DEMO_TARGET_PORT:-25051}:50051"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - /usr/local/bin/pulse-demo-target
+        - --healthcheck
+        - 127.0.0.1:50051
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pulse-a:
+    <<: *pulse-service
+    environment:
+      <<: *pulse-environment
+      PULSE_NODE_ID: pulse-demo-a
+    ports:
+      - "${PULSE_DEMO_PULSE_A_PORT:-29090}:9090"
+
+  pulse-b:
+    <<: *pulse-service
+    environment:
+      <<: *pulse-environment
+      PULSE_NODE_ID: pulse-demo-b
+    ports:
+      - "${PULSE_DEMO_PULSE_B_PORT:-29093}:9090"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    depends_on:
+      pulse-a:
+        condition: service_healthy
+      pulse-b:
+        condition: service_healthy
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "${PULSE_DEMO_PROMETHEUS_PORT:-29091}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --spider
+        - --quiet
+        - http://127.0.0.1:9090/-/ready
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${PULSE_DOCKER_SUBNET:-172.31.255.0/24}

@@ -1,0 +1,42 @@
+version: 1
+scenarios:
+  # Rate > 10 SPS deterministically creates two independently executed slices.
+  # Their results must be merged into one correct run summary.
+  - name: LocalUnaryHealthy
+    endpoint: http://grpc-target:50051
+    scenarios_per_sec: 12
+    max_concurrency: 4
+    duration: 2s
+    repeat:
+      type: once
+    partition_key_strategy: execution_key
+    steps:
+      - protocol: grpc
+        service: pulse.demo.v1.DemoService
+        method: Echo
+        request_fields:
+          message: pulse-local-demo
+          delay_ms: 20
+          fail: false
+        extract:
+          echoed_message: message
+          target_instance: target_instance
+
+  # The target deliberately returns gRPC Unavailable. Pulse must publish the
+  # failures as measurements and must not retry the complete load slice.
+  - name: LocalUnaryTargetFailure
+    endpoint: http://grpc-target:50051
+    scenarios_per_sec: 2
+    max_concurrency: 2
+    duration: 2s
+    repeat:
+      type: once
+    partition_key_strategy: execution_key
+    steps:
+      - protocol: grpc
+        service: pulse.demo.v1.DemoService
+        method: Echo
+        request_fields:
+          message: pulse-expected-target-failure
+          delay_ms: 20
+          fail: true

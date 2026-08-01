@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package pulse.demo.v1;
+
+// DemoService is deliberately unary-only. It exists solely to make the Pulse
+// reviewer demo self-contained and deterministic.
+service DemoService {
+  rpc Echo(EchoRequest) returns (EchoResponse);
+}
+
+message EchoRequest {
+  string message = 1;
+  uint32 delay_ms = 2;
+  bool fail = 3;
+}
+
+message EchoResponse {
+  string message = 1;
+  uint64 request_sequence = 2;
+  string target_instance = 3;
+}

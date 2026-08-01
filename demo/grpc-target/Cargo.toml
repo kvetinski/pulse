@@ -1,0 +1,13 @@
+[package]
+name = "pulse-demo-target"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+prost = "=0.13.5"
+tokio = { version = "=1.49.0", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tonic = { version = "=0.12.3", features = ["transport"] }
+
+[build-dependencies]
+tonic-build = "=0.12.3"
