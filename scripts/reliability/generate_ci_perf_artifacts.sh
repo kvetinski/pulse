@@ -6,7 +6,8 @@ PERF_HISTORY_FILE="${PERF_HISTORY_FILE:-${PERF_REPORT_DIR}/perf-history.jsonl}"
 PERF_OVERLAY="${PERF_OVERLAY:-ci}"
 PERF_WINDOW="${PERF_WINDOW:-30m}"
 PERF_REPORT_MAX_POINTS="${PERF_REPORT_MAX_POINTS:-40}"
-PERF_SCENARIO="${PERF_SCENARIO:-DynamicGrpcCreateGetDeleteCanary}"
+PERF_SCENARIO="${PERF_SCENARIO:-KindUnaryHealthySoak}"
+PERF_EVIDENCE_CLASS="ci_smoke_fixture"
 
 mkdir -p "${PERF_REPORT_DIR}"
 mkdir -p "$(dirname "${PERF_HISTORY_FILE}")"
@@ -22,19 +23,28 @@ git_sha="${GITHUB_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 git_sha="${git_sha:0:12}"
 git_branch="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}"
 git_tag="$(git describe --tags --exact-match 2>/dev/null || echo none)"
+if git diff --quiet --ignore-submodules -- 2>/dev/null \
+  && git diff --cached --quiet --ignore-submodules -- 2>/dev/null \
+  && [[ -z "$(git ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+  git_dirty=false
+else
+  git_dirty=true
+fi
 
-success_rate="${PERF_SUCCESS_RATE:-0.1200000000}"
-failure_rate="${PERF_FAILURE_RATE:-0.0005000000}"
-p95_s="${PERF_P95_S:-0.018}"
-p99_s="${PERF_P99_S:-0.045}"
+success_rate="${PERF_SUCCESS_RATE:-1.2000000000}"
+failure_rate="${PERF_FAILURE_RATE:-0.0050000000}"
+p95_s="${PERF_P95_S:-0.180}"
+p99_s="${PERF_P99_S:-0.450}"
 error_rate="${PERF_ERROR_RATE:-0.0041493776}"
-throughput_floor="${PERF_THROUGHPUT_FLOOR:-0.01}"
-p95_max_s="${PERF_P95_MAX_S:-0.05}"
-p99_max_s="${PERF_P99_MAX_S:-0.20}"
-error_rate_max="${PERF_ERROR_RATE_MAX:-0.005}"
+throughput_floor="${PERF_THROUGHPUT_FLOOR:-1.0}"
+p95_max_s="${PERF_P95_MAX_S:-0.25}"
+p99_max_s="${PERF_P99_MAX_S:-0.50}"
+error_rate_max="${PERF_ERROR_RATE_MAX:-0.01}"
 
 cat > "${report_log}" <<EOF
 [${timestamp_iso}] starting performance threshold checks (ci fixture)
+[${timestamp_iso}] classification=${PERF_EVIDENCE_CLASS} synthetic=true authoritative_capacity_claim=false
+[${timestamp_iso}] WARNING: values are synthetic renderer smoke inputs, not benchmark measurements
 [${timestamp_iso}] context=github-actions namespace=ci window=${PERF_WINDOW} threshold_file=ci-fixture
 [${timestamp_iso}] scenario=${PERF_SCENARIO} status=PASS success_rate=${success_rate} floor=${throughput_floor} p95_s=${p95_s} p95_max_s=${p95_max_s} p99_s=${p99_s} p99_max_s=${p99_max_s} error_rate=${error_rate} error_rate_max=${error_rate_max} reasons=none
 [${timestamp_iso}] performance threshold checks completed checked=1 failures=0 report_file=${report_log}
@@ -50,6 +60,8 @@ python3 - <<'PY' \
   "${git_sha}" \
   "${git_branch}" \
   "${git_tag}" \
+  "${git_dirty}" \
+  "${PERF_EVIDENCE_CLASS}" \
   "${PERF_SCENARIO}" \
   "${success_rate}" \
   "${failure_rate}" \
@@ -74,6 +86,8 @@ from pathlib import Path
     git_sha,
     git_branch,
     git_tag,
+    git_dirty,
+    evidence_class,
     scenario_name,
     success_rate,
     failure_rate,
@@ -102,16 +116,26 @@ payload = {
         "checked": 1,
         "failures": 0,
         "failure_reason": None,
+        "evidence_class": evidence_class,
+        "synthetic_input": True,
+        "authoritative_capacity_claim": False,
     },
     "git": {
         "sha": git_sha,
         "branch": git_branch,
         "tag": None if git_tag in ("", "none") else git_tag,
+        "dirty": git_dirty == "true",
     },
     "artifacts": {
         "log_file": report_log,
         "json_file": report_json,
     },
+    "limitations": [
+        "synthetic values exercise report rendering only",
+        "no target load was generated",
+        "no raw Prometheus responses or result-completeness evidence exist",
+        "shared-runner output is not a capacity claim",
+    ],
     "scenarios": [
         {
             "name": scenario_name,

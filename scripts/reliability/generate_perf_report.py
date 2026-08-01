@@ -80,6 +80,15 @@ def collect_points(
                 "run_id": record.get("run_id", ""),
                 "timestamp_utc": record.get("timestamp_utc", ""),
                 "status": entry.get("status", record.get("summary", {}).get("status", "FAIL")),
+                "evidence_class": record.get("summary", {}).get(
+                    "evidence_class", "legacy_unclassified"
+                ),
+                "synthetic_input": bool(
+                    record.get("summary", {}).get("synthetic_input", False)
+                ),
+                "authoritative_capacity_claim": bool(
+                    record.get("summary", {}).get("authoritative_capacity_claim", False)
+                ),
                 "success_rate": to_float(metrics.get("success_rate")),
                 "p95_s": to_float(metrics.get("p95_s")),
                 "p99_s": to_float(metrics.get("p99_s")),
@@ -324,10 +333,26 @@ def build_report(
     output_file.parent.mkdir(parents=True, exist_ok=True)
     run_id = latest.get("run_id", "unknown")
     overlay = latest.get("overlay", "unknown")
+    summary = latest.get("summary", {})
+    evidence_class = summary.get("evidence_class", "legacy_unclassified")
+    synthetic_input = bool(summary.get("synthetic_input", False))
+    authoritative = bool(summary.get("authoritative_capacity_claim", False))
 
     md: list[str] = []
     md.append(f"# Performance Report {run_id}")
     md.append("")
+    if synthetic_input:
+        md.append(
+            "> **Synthetic CI smoke fixture.** These values exercise artifact rendering; "
+            "they are not benchmark measurements or capacity evidence."
+        )
+        md.append("")
+    elif not authoritative:
+        md.append(
+            "> **Non-authoritative observation.** Interpret values only within the captured "
+            "environment and evidence bundle."
+        )
+        md.append("")
     md.append("## Run Metadata")
     md.append("")
     md.append(f"- `timestamp_utc`: `{latest.get('timestamp_utc', 'unknown')}`")
@@ -335,7 +360,10 @@ def build_report(
     md.append(f"- `kube_context`: `{latest.get('kube_context', 'unknown')}`")
     md.append(f"- `kube_namespace`: `{latest.get('kube_namespace', 'unknown')}`")
     md.append(f"- `perf_window`: `{latest.get('perf_window', 'unknown')}`")
-    md.append(f"- `status`: `{latest.get('summary', {}).get('status', 'unknown')}`")
+    md.append(f"- `status`: `{summary.get('status', 'unknown')}`")
+    md.append(f"- `evidence_class`: `{evidence_class}`")
+    md.append(f"- `synthetic_input`: `{str(synthetic_input).lower()}`")
+    md.append(f"- `authoritative_capacity_claim`: `{str(authoritative).lower()}`")
     md.append(
         f"- `git_sha`: `{latest.get('git', {}).get('sha', 'unknown')}`"
     )
@@ -346,6 +374,26 @@ def build_report(
         f"- `git_tag`: `{latest.get('git', {}).get('tag') or 'none'}`"
     )
     md.append("")
+    limitations = latest.get("limitations", [])
+    if limitations:
+        md.append("## Limitations")
+        md.append("")
+        for limitation in limitations:
+            md.append(f"- {limitation}")
+        md.append("")
+
+    history_classes = sorted(
+        {
+            str(record.get("summary", {}).get("evidence_class", "legacy_unclassified"))
+            for record in history
+        }
+    )
+    if len(history_classes) > 1:
+        md.append(
+            "> Trend warning: history contains multiple evidence classes "
+            f"({', '.join(history_classes)}). Deltas are visual context, not a controlled comparison."
+        )
+        md.append("")
 
     scenarios = latest.get("scenarios", [])
     if not scenarios:

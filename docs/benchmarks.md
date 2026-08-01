@@ -2,6 +2,14 @@
 
 Last updated: 2026-03-02 12:46:08 UTC
 
+> **Historical, incomplete evidence.** These measurements predate the current failure
+> model and evidence-bundle policy. Raw Prometheus responses, image digest, dirty state,
+> scenario/descriptor hashes, full dependency and target configuration, result
+> completeness, and failure timeline were not retained. They are useful context only
+> and are not authoritative capacity claims. See `docs/evidence-policy.md`.
+> The old account-service scenario definition was not retained. The path named below
+> now contains the repository-owned kind fixture and cannot reproduce these numbers.
+
 ## Environment
 
 - Host OS: Linux 6.8.0-101-generic x86_64
@@ -54,33 +62,53 @@ Prometheus values used:
 
 ### CI-Enforced Smoke Thresholds (`pulse_bench`)
 
-These are enforced in `make ci-check` and fail CI on regression.
+These are noisy shared-runner smoke checks enforced in `make ci-check`. They may catch a
+catastrophic regression but are not performance or capacity evidence.
 
 | Metric | Threshold | Source |
 |---|---:|---|
-| Throughput floor | `runner_noop started_per_sec >= 120` | `pulse_bench` output |
+| Catastrophic-regression floor | `runner_noop started_per_sec >= 20` | `pulse_bench` output |
 | Latency ceiling | `runner_noop avg_run_ms <= 200` | `runner_elapsed / runs` in `pulse_bench` |
 | Error-rate ceiling | `runner_noop drop_ratio <= 0.0` | `1 - finished/started` in `pulse_bench` |
 
 Runtime env vars for overrides:
-- `PULSE_BENCH_MIN_STARTED_PER_SEC` (default `120`)
+- `PULSE_BENCH_MIN_STARTED_PER_SEC` (default `20`)
 - `PULSE_BENCH_MAX_AVG_RUN_MS` (default `200`)
 - `PULSE_BENCH_MAX_DROP_RATIO` (default `0`)
 
-### Runtime SLO Guardrails (Prometheus, executable gate)
+### Historical Runtime Smoke Guardrails
 
-These thresholds are enforced on demand via:
-
-```bash
-make k8s-check-performance K8S_OVERLAY=<kind|staging|prod> PERF_WINDOW=30m
-```
+These environment-specific thresholds were used on demand by the former kind/account
+stack. They are retained unchanged as historical context:
 
 | Scenario | Throughput floor | p95 max | p99 max | Error rate max |
 |---|---:|---:|---:|---:|
 | kind: DynamicGrpcCreateGetDeleteCanary | `>= 0.01` scenario/s | `<= 50 ms` | `<= 200 ms` | `<= 0.5%` |
-| staging: StagingGrpcCreateGet | `>= 0.01` scenario/s | `<= 80 ms` | `<= 250 ms` | `<= 0.5%` |
-| staging: StagingGrpcCreateGetDelete | `>= 0.05` scenario/s | `<= 80 ms` | `<= 250 ms` | `<= 0.5%` |
-| prod: ProdGrpcCanaryCreateGetDelete | `>= 0.003` scenario/s | `<= 100 ms` | `<= 300 ms` | `<= 1.0%` |
+| staging template: StagingGrpcCreateGet | `>= 0.01` scenario/s | `<= 80 ms` | `<= 250 ms` | `<= 0.5%` |
+| staging template: StagingGrpcCreateGetDelete | `>= 0.05` scenario/s | `<= 80 ms` | `<= 250 ms` | `<= 0.5%` |
+| prod template: ProdGrpcCanaryCreateGetDelete | `>= 0.003` scenario/s | `<= 100 ms` | `<= 300 ms` | `<= 1.0%` |
+
+The staging/prod rows are retained configuration templates only. The app-only overlays
+do not deploy Prometheus, and these values have not been revalidated as SLOs.
+
+### Current Kind Fixture Smoke Guardrail
+
+The self-contained kind overlay now runs a different scenario and target. Its current
+CSV is a coarse operational smoke gate, chosen to catch missing traffic or severe
+regressions; it is not derived from the historical measurements above and is not a
+capacity claim.
+
+| Scenario | Throughput floor | p95 max | p99 max | Error rate max |
+|---|---:|---:|---:|---:|
+| kind: KindUnaryHealthySoak | `>= 1.0` scenario/s | `<= 250 ms` | `<= 500 ms` | `<= 1.0%` |
+
+Record a fresh evidence bundle before tightening or citing this guardrail:
+
+```bash
+make k8s-deploy-kind
+make k8s-soak-chaos K8S_OVERLAY=kind SOAK_DURATION_SEC=1800
+make k8s-check-performance K8S_OVERLAY=kind PERF_WINDOW=30m
+```
 
 ## Before/After Optimization Delta
 
@@ -105,7 +133,7 @@ PULSE_BENCH_RUNNER_ITERATIONS=20 \
 cargo run --release --bin pulse_bench --offline
 ```
 
-Kubernetes metrics snapshot:
+Current kind fixture metrics snapshot (this does not reproduce the historical rows):
 
 ```bash
 kubectl --context kind-account -n pulse-dev top pods -l app=pulse

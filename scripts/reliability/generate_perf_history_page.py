@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import math
 import re
@@ -90,6 +91,14 @@ def collect_points(
                 "overlay": str(record.get("overlay", "")),
                 "git_sha": str(record.get("git", {}).get("sha", "unknown")),
                 "status": str(entry.get("status", record.get("summary", {}).get("status", "FAIL"))),
+                "evidence_class": str(
+                    record.get("summary", {}).get(
+                        "evidence_class", "legacy_unclassified"
+                    )
+                ),
+                "synthetic_input": bool(
+                    record.get("summary", {}).get("synthetic_input", False)
+                ),
                 "success_rate": to_float(metrics.get("success_rate")),
                 "p95_s": to_float(metrics.get("p95_s")),
                 "p99_s": to_float(metrics.get("p99_s")),
@@ -324,6 +333,17 @@ def build_history_page(
     latest_run_id = str(latest.get("run_id", "n/a"))
     latest_timestamp = str(latest.get("timestamp_utc", "n/a"))
     latest_overlay = str(latest.get("overlay", "n/a"))
+    latest_summary = latest.get("summary", {})
+    latest_evidence_class = str(
+        latest_summary.get("evidence_class", "legacy_unclassified")
+    )
+    latest_synthetic = bool(latest_summary.get("synthetic_input", False))
+    evidence_classes = sorted(
+        {
+            str(record.get("summary", {}).get("evidence_class", "legacy_unclassified"))
+            for record in records
+        }
+    )
 
     lines: list[str] = []
     lines.append("<!doctype html>")
@@ -345,6 +365,7 @@ def build_history_page(
     lines.append("    th { background: #f3f4f6; }")
     lines.append("    .pass { color: #166534; font-weight: 700; }")
     lines.append("    .fail { color: #991b1b; font-weight: 700; }")
+    lines.append("    .warning { max-width: 1000px; padding: 12px 14px; border: 2px solid #d97706; background: #fffbeb; color: #78350f; font-weight: 700; }")
     lines.append("    a { color: #1d4ed8; }")
     lines.append("  </style>")
     lines.append("</head>")
@@ -353,6 +374,15 @@ def build_history_page(
     lines.append(
         '  <p class="muted">Generated from <code>perf-history.jsonl</code>. Trend charts are rendered per scenario.</p>'
     )
+    if latest_synthetic:
+        lines.append(
+            '  <p class="warning">Synthetic CI smoke fixture: values exercise rendering and are not benchmark measurements or capacity evidence.</p>'
+        )
+    elif len(evidence_classes) > 1:
+        classes = html.escape(", ".join(evidence_classes))
+        lines.append(
+            f'  <p class="warning">Mixed evidence classes ({classes}). Trend lines are visual context, not a controlled comparison.</p>'
+        )
     lines.append('  <section class="meta">')
     lines.append(f'    <div class="card"><strong>Runs</strong><br>{run_count}</div>')
     lines.append(
@@ -366,6 +396,9 @@ def build_history_page(
     )
     lines.append(
         f'    <div class="card"><strong>Latest Overlay</strong><br>{latest_overlay}</div>'
+    )
+    lines.append(
+        f'    <div class="card"><strong>Latest Evidence Class</strong><br><code>{html.escape(latest_evidence_class)}</code></div>'
     )
     lines.append("  </section>")
 
@@ -429,11 +462,12 @@ def build_history_page(
         lines.append(f'  <section class="scenario" id="{slug}">')
         lines.append(f"    <h3>{name}</h3>")
         lines.append("    <table>")
-        lines.append("      <tr><th>Latest status</th><th>Latest run</th><th>Latest commit</th><th>Points rendered</th></tr>")
+        lines.append("      <tr><th>Latest status</th><th>Latest run</th><th>Latest commit</th><th>Evidence class</th><th>Points rendered</th></tr>")
         lines.append(
             f'      <tr><td class="{status_css}">{latest_point.get("status", "UNKNOWN")}</td>'
             f'<td><code>{latest_point.get("run_id", "n/a")}</code></td>'
             f'<td><code>{latest_point.get("git_sha", "unknown")}</code></td>'
+            f'<td><code>{html.escape(str(latest_point.get("evidence_class", "legacy_unclassified")))}</code></td>'
             f"<td>{len(points)}</td></tr>"
         )
         lines.append("    </table>")

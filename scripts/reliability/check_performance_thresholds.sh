@@ -20,6 +20,14 @@ PERF_GRAFANA_PASSWORD="${PERF_GRAFANA_PASSWORD:-}"
 PERF_GRAFANA_TOKEN="${PERF_GRAFANA_TOKEN:-}"
 PERF_GRAFANA_TIMEOUT_SEC="${PERF_GRAFANA_TIMEOUT_SEC:-8}"
 PERF_GRAFANA_VERIFY_TLS="${PERF_GRAFANA_VERIFY_TLS:-true}"
+PERF_EVIDENCE_ENABLED="${PERF_EVIDENCE_ENABLED:-true}"
+PERF_EVIDENCE_CLASS="${PERF_EVIDENCE_CLASS:-environment_smoke_check}"
+PERF_BUILD_PROFILE="${PERF_BUILD_PROFILE:-unknown}"
+PERF_SCENARIO_FILES="${PERF_SCENARIO_FILES:-scenarios.yaml}"
+PERF_DESCRIPTOR_FILES="${PERF_DESCRIPTOR_FILES:-descriptors/services.pb}"
+PERF_TARGET_DEPLOYMENT="${PERF_TARGET_DEPLOYMENT:-}"
+PERF_PULSE_CONFIGMAP="${PERF_PULSE_CONFIGMAP:-pulse-config}"
+PERF_TARGET_CONFIGMAP="${PERF_TARGET_CONFIGMAP:-}"
 
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "kubectl is required" >&2
@@ -42,9 +50,23 @@ report_file="${PERF_REPORT_DIR}/perf-gate-${timestamp}.log"
 report_json_file="${PERF_REPORT_DIR}/perf-gate-${timestamp}.json"
 report_md_file="${PERF_REPORT_DIR}/perf-report-${timestamp}.md"
 scenario_rows_file="$(mktemp)"
+evidence_bundle_dir="${PERF_EVIDENCE_DIR:-${PERF_REPORT_DIR}/evidence-${timestamp}}"
+evidence_started=false
+evidence_finalized=false
 
 cleanup() {
-  rm -f "${scenario_rows_file}"
+  rm -f -- "${scenario_rows_file}"
+  if [[ "${evidence_started}" == "true" && "${evidence_finalized}" != "true" ]]; then
+    EVIDENCE_CLASS="${PERF_EVIDENCE_CLASS}" \
+    EVIDENCE_BUILD_PROFILE="${PERF_BUILD_PROFILE}" \
+    EVIDENCE_SCENARIO_FILES="${PERF_SCENARIO_FILES}" \
+    EVIDENCE_DESCRIPTOR_FILES="${PERF_DESCRIPTOR_FILES}" \
+    EVIDENCE_TARGET_DEPLOYMENT="${PERF_TARGET_DEPLOYMENT}" \
+    EVIDENCE_PULSE_CONFIGMAP="${PERF_PULSE_CONFIGMAP}" \
+    EVIDENCE_TARGET_CONFIGMAP="${PERF_TARGET_CONFIGMAP}" \
+      scripts/reliability/capture_evidence_bundle.sh finish "${evidence_bundle_dir}" \
+      >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
@@ -111,10 +133,15 @@ except Exception:
 }
 
 prom_query_scalar() {
-  local query="$1"
+  local query_label="$1"
+  local query="$2"
   local encoded
   local raw_response
   local stderr_file
+  local safe_label
+  local raw_file
+  safe_label="$(printf '%s' "${query_label}" | tr -cs 'A-Za-z0-9._-' '_')"
+  raw_file="${evidence_bundle_dir}/raw-prometheus/${safe_label}.json"
   encoded="$(url_encode "${query}")"
   stderr_file="$(mktemp)"
   raw_response="$(
@@ -126,7 +153,17 @@ prom_query_scalar() {
       cat "${stderr_file}" >&2
     fi
   fi
-  rm -f "${stderr_file}"
+  if [[ "${evidence_started}" == "true" ]]; then
+    printf '%s\n' "${query}" >"${evidence_bundle_dir}/raw-prometheus/${safe_label}.promql"
+    printf '%s\n' "${raw_response}" >"${raw_file}"
+    if [[ -s "${stderr_file}" ]]; then
+      cp -- "${stderr_file}" "${raw_file}.stderr"
+    fi
+    printf '[%s] prometheus_query label=%q promql=%q\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${query_label}" "${query}" \
+      >>"${evidence_bundle_dir}/commands/commands.log"
+  fi
+  rm -f -- "${stderr_file}"
   printf '%s' "${raw_response}" | extract_scalar_value
 }
 
@@ -149,6 +186,7 @@ write_json_report() {
   local git_sha="$3"
   local git_branch="$4"
   local git_tag="$5"
+  local git_dirty="$6"
 
   python3 - \
     "${scenario_rows_file}" \
@@ -167,7 +205,10 @@ write_json_report() {
     "${run_failure_reason}" \
     "${git_sha}" \
     "${git_branch}" \
-    "${git_tag}" <<'PY'
+    "${git_tag}" \
+    "${git_dirty}" \
+    "${PERF_EVIDENCE_CLASS}" \
+    "${evidence_bundle_dir}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -190,6 +231,9 @@ from pathlib import Path
     git_sha,
     git_branch,
     git_tag,
+    git_dirty,
+    evidence_class,
+    evidence_bundle,
 ) = sys.argv[1:]
 
 def parse_num(raw: str):
@@ -259,15 +303,19 @@ payload = {
         "checked": int(checked_raw),
         "failures": int(failures_raw),
         "failure_reason": None if run_failure_reason in ("", "none") else run_failure_reason,
+        "evidence_class": evidence_class,
+        "authoritative_capacity_claim": False,
     },
     "git": {
         "sha": git_sha,
         "branch": git_branch,
         "tag": None if git_tag in ("", "none") else git_tag,
+        "dirty": git_dirty == "true",
     },
     "artifacts": {
         "log_file": log_file,
         "json_file": json_path,
+        "evidence_bundle": evidence_bundle,
     },
     "scenarios": scenarios,
 }
@@ -449,6 +497,112 @@ PY
   fi
 }
 
+start_evidence_capture() {
+  if ! is_truthy "${PERF_EVIDENCE_ENABLED}"; then
+    return 0
+  fi
+
+  EVIDENCE_CLASS="${PERF_EVIDENCE_CLASS}" \
+  EVIDENCE_BUILD_PROFILE="${PERF_BUILD_PROFILE}" \
+  EVIDENCE_SCENARIO_FILES="${PERF_SCENARIO_FILES}" \
+  EVIDENCE_DESCRIPTOR_FILES="${PERF_DESCRIPTOR_FILES}" \
+  EVIDENCE_TARGET_DEPLOYMENT="${PERF_TARGET_DEPLOYMENT}" \
+  EVIDENCE_PULSE_CONFIGMAP="${PERF_PULSE_CONFIGMAP}" \
+  EVIDENCE_TARGET_CONFIGMAP="${PERF_TARGET_CONFIGMAP}" \
+    scripts/reliability/capture_evidence_bundle.sh start "${evidence_bundle_dir}"
+  evidence_started=true
+  printf '[%s] invocation script=%q context=%q namespace=%q overlay=%q window=%q threshold_file=%q\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$0" "${KUBE_CONTEXT}" "${KUBE_NAMESPACE}" \
+    "${PERF_OVERLAY}" "${PERF_WINDOW}" "${PERF_THRESHOLD_FILE}" \
+    >>"${evidence_bundle_dir}/commands/commands.log"
+}
+
+capture_data_plane_summary() {
+  if [[ "${evidence_started}" != "true" ]]; then
+    return 0
+  fi
+
+  local rows_file="${evidence_bundle_dir}/metadata/data-plane-summary.tsv"
+  local name
+  local query
+  local value
+  : >"${rows_file}"
+
+  while IFS='|' read -r name query; do
+    [[ -n "${name}" ]] || continue
+    value="$(prom_query_scalar "data-plane-${name}" "${query}")"
+    printf '%s\t%s\t%s\n' "${name}" "${value}" "${query}" >>"${rows_file}"
+  done <<EOF
+jobs_received|sum(increase(pulse_worker_jobs_received_total[${PERF_WINDOW}])) or vector(0)
+results_published|sum(increase(pulse_worker_results_published_total[${PERF_WINDOW}])) or vector(0)
+source_commits|sum(increase(pulse_worker_job_commits_total[${PERF_WINDOW}])) or vector(0)
+dlq_published|sum(increase(pulse_worker_dlq_published_total[${PERF_WINDOW}])) or vector(0)
+retry_jobs_published|sum(increase(pulse_worker_retry_jobs_published_total[${PERF_WINDOW}])) or vector(0)
+duplicates_suppressed|sum(increase(pulse_worker_jobs_duplicate_total[${PERF_WINDOW}])) or vector(0)
+result_publish_failures|sum(increase(pulse_worker_result_publish_failures_total[${PERF_WINDOW}])) or vector(0)
+commit_failures|sum(increase(pulse_worker_job_commit_failures_total[${PERF_WINDOW}])) or vector(0)
+dlq_publish_failures|sum(increase(pulse_worker_dlq_publish_failures_total[${PERF_WINDOW}])) or vector(0)
+uncommitted_jobs|sum(pulse_worker_uncommitted_jobs) or vector(0)
+incomplete_dispatch_slices|sum(pulse_scheduler_incomplete_dispatch_slices) or vector(0)
+aggregate_complete|sum(increase(pulse_aggregate_results_total{outcome="complete"}[${PERF_WINDOW}])) or vector(0)
+aggregate_partial|sum(increase(pulse_aggregate_results_total{outcome="partial"}[${PERF_WINDOW}])) or vector(0)
+aggregate_timed_out|sum(increase(pulse_aggregate_results_total{outcome="timed_out"}[${PERF_WINDOW}])) or vector(0)
+aggregate_cancelled|sum(increase(pulse_aggregate_results_total{outcome="cancelled"}[${PERF_WINDOW}])) or vector(0)
+EOF
+
+  python3 - "${rows_file}" "${evidence_bundle_dir}/metadata/data-plane-summary.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+rows = []
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if not line:
+        continue
+    name, value, query = line.split("\t", 2)
+    try:
+        parsed = float(value)
+    except ValueError:
+        parsed = None
+    rows.append({"name": name, "value": parsed, "raw_value": value, "promql": query})
+
+payload = {
+    "kind": "observed_metric_counts",
+    "proves_unique_kafka_identities": False,
+    "proves_target_exactly_once": False,
+    "observations": rows,
+}
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+finalize_evidence_capture() {
+  if [[ "${evidence_started}" != "true" ]]; then
+    return 0
+  fi
+
+  mkdir -p "${evidence_bundle_dir}/derived"
+  cp -- "${report_file}" "${evidence_bundle_dir}/derived/"
+  cp -- "${report_json_file}" "${evidence_bundle_dir}/derived/"
+  cp -- "${report_md_file}" "${evidence_bundle_dir}/derived/"
+  cp -- "${PERF_THRESHOLD_FILE}" "${evidence_bundle_dir}/inputs/performance-thresholds.csv"
+  printf '%s\n' \
+    "This threshold run is classified as ${PERF_EVIDENCE_CLASS}; it is not an authoritative capacity claim." \
+    >>"${evidence_bundle_dir}/limitations.txt"
+
+  EVIDENCE_CLASS="${PERF_EVIDENCE_CLASS}" \
+  EVIDENCE_BUILD_PROFILE="${PERF_BUILD_PROFILE}" \
+  EVIDENCE_SCENARIO_FILES="${PERF_SCENARIO_FILES}" \
+  EVIDENCE_DESCRIPTOR_FILES="${PERF_DESCRIPTOR_FILES}" \
+  EVIDENCE_TARGET_DEPLOYMENT="${PERF_TARGET_DEPLOYMENT}" \
+  EVIDENCE_PULSE_CONFIGMAP="${PERF_PULSE_CONFIGMAP}" \
+  EVIDENCE_TARGET_CONFIGMAP="${PERF_TARGET_CONFIGMAP}" \
+    scripts/reliability/capture_evidence_bundle.sh finish "${evidence_bundle_dir}"
+  evidence_finalized=true
+  log "evidence bundle saved to ${evidence_bundle_dir}"
+}
+
+start_evidence_capture
 log "starting performance threshold checks"
 log "context=${KUBE_CONTEXT} namespace=${KUBE_NAMESPACE} window=${PERF_WINDOW} threshold_file=${PERF_THRESHOLD_FILE}"
 
@@ -459,6 +613,13 @@ run_failure_reason="none"
 git_sha="$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
 git_tag="$(git describe --tags --exact-match 2>/dev/null || echo "none")"
+if git diff --quiet --ignore-submodules -- 2>/dev/null \
+  && git diff --cached --quiet --ignore-submodules -- 2>/dev/null \
+  && [[ -z "$(git ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+  git_dirty=false
+else
+  git_dirty=true
+fi
 
 while IFS=',' read -r scenario throughput_floor p95_max p99_max error_rate_max; do
   if [[ -z "${scenario}" ]]; then
@@ -473,15 +634,16 @@ while IFS=',' read -r scenario throughput_floor p95_max p99_max error_rate_max; 
 
   checked=$((checked + 1))
   scenario_trimmed="$(echo "${scenario}" | xargs)"
+  scenario_label="$(printf '%s' "${scenario_trimmed}" | tr -cs 'A-Za-z0-9._-' '_')"
   throughput_floor="$(echo "${throughput_floor}" | xargs)"
   p95_max="$(echo "${p95_max}" | xargs)"
   p99_max="$(echo "${p99_max}" | xargs)"
   error_rate_max="$(echo "${error_rate_max}" | xargs)"
 
-  success_rate="$(prom_query_scalar "sum(rate(pulse_scenario_executions_total{scenario=\"${scenario_trimmed}\",status=\"success\"}[${PERF_WINDOW}]))")"
-  failure_rate="$(prom_query_scalar "sum(rate(pulse_scenario_executions_total{scenario=\"${scenario_trimmed}\",status=\"failure\"}[${PERF_WINDOW}]))")"
-  p95_value="$(prom_query_scalar "histogram_quantile(0.95, sum by (le) (rate(pulse_scenario_duration_seconds_bucket{scenario=\"${scenario_trimmed}\",status=\"success\"}[${PERF_WINDOW}])))")"
-  p99_value="$(prom_query_scalar "histogram_quantile(0.99, sum by (le) (rate(pulse_scenario_duration_seconds_bucket{scenario=\"${scenario_trimmed}\",status=\"success\"}[${PERF_WINDOW}])))")"
+  success_rate="$(prom_query_scalar "${scenario_label}-success-rate" "sum(rate(pulse_scenario_executions_total{scenario=\"${scenario_trimmed}\",status=\"success\"}[${PERF_WINDOW}]))")"
+  failure_rate="$(prom_query_scalar "${scenario_label}-failure-rate" "sum(rate(pulse_scenario_executions_total{scenario=\"${scenario_trimmed}\",status=\"failure\"}[${PERF_WINDOW}]))")"
+  p95_value="$(prom_query_scalar "${scenario_label}-p95" "histogram_quantile(0.95, sum by (le) (rate(pulse_scenario_duration_seconds_bucket{scenario=\"${scenario_trimmed}\",status=\"success\"}[${PERF_WINDOW}])))")"
+  p99_value="$(prom_query_scalar "${scenario_label}-p99" "histogram_quantile(0.99, sum by (le) (rate(pulse_scenario_duration_seconds_bucket{scenario=\"${scenario_trimmed}\",status=\"success\"}[${PERF_WINDOW}])))")"
   success_rate="$(normalize_number "${success_rate}")"
   failure_rate="$(normalize_number "${failure_rate}")"
   p95_value="$(normalize_number "${p95_value}")"
@@ -554,14 +716,22 @@ if (( failures > 0 )); then
   run_status="FAIL"
 fi
 
+capture_data_plane_summary
 log "performance threshold checks completed checked=${checked} failures=${failures} report_file=${report_file}"
-write_json_report "${run_status}" "${run_failure_reason}" "${git_sha}" "${git_branch}" "${git_tag}"
+write_json_report \
+  "${run_status}" \
+  "${run_failure_reason}" \
+  "${git_sha}" \
+  "${git_branch}" \
+  "${git_tag}" \
+  "${git_dirty}"
 log "json report saved to ${report_json_file}"
 append_history_record
 log "history updated in ${PERF_HISTORY_FILE}"
 generate_markdown_report
 log "markdown report saved to ${report_md_file}"
 publish_grafana_annotation
+finalize_evidence_capture
 
 if [[ "${run_status}" != "PASS" ]]; then
   exit 1
