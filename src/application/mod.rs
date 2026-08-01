@@ -1,3 +1,6 @@
+pub mod aggregation;
+pub mod aggregation_service;
+pub mod dlq_replay;
 pub mod metrics;
 pub mod rate_limiter;
 pub mod runner;

@@ -3,11 +3,14 @@ use std::time::Duration;
 
 use hdrhistogram::Histogram;
 
+use crate::domain::contracts::{LATENCY_BUCKET_BOUNDS_MS, LatencyBucket};
+
 pub struct MetricsBucket {
     pub total: u64,
     pub success: u64,
     pub failure: u64,
     pub latency_ms: Histogram<u64>,
+    latency_overflow: u64,
 }
 
 impl MetricsBucket {
@@ -17,6 +20,7 @@ impl MetricsBucket {
             success: 0,
             failure: 0,
             latency_ms: Histogram::new_with_bounds(1, 120_000, 3).expect("valid histogram"),
+            latency_overflow: 0,
         }
     }
 
@@ -28,8 +32,16 @@ impl MetricsBucket {
             self.failure += 1;
         }
 
-        let ms = duration.as_millis() as u64;
-        let _ = self.latency_ms.record(ms.max(1));
+        let ms = u64::try_from(duration.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(1);
+        if ms > 120_000 {
+            self.latency_overflow = self.latency_overflow.saturating_add(1);
+        } else {
+            self.latency_ms
+                .record(ms)
+                .expect("latency within configured histogram bounds");
+        }
     }
 
     pub fn merge_from(&mut self, other: &MetricsBucket) {
@@ -37,6 +49,29 @@ impl MetricsBucket {
         self.success += other.success;
         self.failure += other.failure;
         let _ = self.latency_ms.add(&other.latency_ms);
+        self.latency_overflow = self.latency_overflow.saturating_add(other.latency_overflow);
+    }
+
+    pub fn mergeable_latency_buckets(&self) -> Vec<LatencyBucket> {
+        let mut lower_bound = 1_u64;
+        let mut buckets = Vec::with_capacity(LATENCY_BUCKET_BOUNDS_MS.len() + 1);
+        for upper_bound_ms in LATENCY_BUCKET_BOUNDS_MS {
+            let count = if lower_bound > *upper_bound_ms {
+                0
+            } else {
+                self.latency_ms.count_between(lower_bound, *upper_bound_ms)
+            };
+            buckets.push(LatencyBucket {
+                upper_bound_ms: *upper_bound_ms,
+                count,
+            });
+            lower_bound = upper_bound_ms.saturating_add(1);
+        }
+        buckets.push(LatencyBucket {
+            upper_bound_ms: u64::MAX,
+            count: self.latency_overflow,
+        });
+        buckets
     }
 }
 

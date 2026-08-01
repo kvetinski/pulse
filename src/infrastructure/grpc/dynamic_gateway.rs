@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -21,6 +22,7 @@ pub struct DescriptorBackedGrpcGateway {
     channel: Channel,
     methods: Arc<HashMap<(String, String), MethodMeta>>,
     messages: Arc<HashMap<String, MessageSchema>>,
+    request_timeout: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +74,43 @@ enum FieldKind {
 }
 
 impl DescriptorBackedGrpcGateway {
+    /// Loads and validates a descriptor-backed client without opening a network
+    /// connection. This is used by dry-run planning so validation never emits
+    /// target traffic.
+    pub fn from_descriptor_set(
+        endpoint: &str,
+        descriptor_set_path: &str,
+        request_timeout: Duration,
+    ) -> Result<Self, PulseError> {
+        let channel = Endpoint::from_shared(endpoint.to_string())
+            .map_err(|e| PulseError::InvalidScenario(format!("invalid endpoint: {e}")))?
+            .timeout(request_timeout)
+            .connect_lazy();
+        let (methods, messages) = load_schema(descriptor_set_path)?;
+        Ok(Self {
+            channel,
+            methods: Arc::new(methods),
+            messages: Arc::new(messages),
+            request_timeout,
+        })
+    }
+
     pub async fn connect(endpoint: &str, descriptor_set_path: &str) -> Result<Self, PulseError> {
+        Self::connect_with_timeouts(
+            endpoint,
+            descriptor_set_path,
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .await
+    }
+
+    pub async fn connect_with_timeouts(
+        endpoint: &str,
+        descriptor_set_path: &str,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+    ) -> Result<Self, PulseError> {
         info!(
             endpoint = %endpoint,
             descriptor_set_path = %descriptor_set_path,
@@ -80,10 +118,12 @@ impl DescriptorBackedGrpcGateway {
         );
 
         let channel = Endpoint::from_shared(endpoint.to_string())
-            .map_err(|e| PulseError::Client(format!("invalid endpoint: {e}")))?
+            .map_err(|e| PulseError::InvalidScenario(format!("invalid endpoint: {e}")))?
+            .connect_timeout(connect_timeout)
+            .timeout(request_timeout)
             .connect()
             .await
-            .map_err(|e| PulseError::Client(format!("connect failed: {e}")))?;
+            .map_err(|e| PulseError::TargetTransport(format!("connect failed: {e}")))?;
 
         let (methods, messages) = load_schema(descriptor_set_path)?;
 
@@ -97,6 +137,7 @@ impl DescriptorBackedGrpcGateway {
             channel,
             methods: Arc::new(methods),
             messages: Arc::new(messages),
+            request_timeout,
         })
     }
 
@@ -132,25 +173,50 @@ impl DynamicGrpcGateway for DescriptorBackedGrpcGateway {
 
         let mut grpc = Grpc::new(self.channel.clone());
         grpc.ready().await.map_err(|e| {
-            PulseError::Client(format!(
+            PulseError::TargetTransport(format!(
                 "dynamic grpc client not ready for {}/{}: {e}",
                 input.service, input.method
             ))
         })?;
-        let response = grpc
-            .unary(tonic::Request::new(input.payload), path, RawBytesCodec)
-            .await
-            .map_err(|status| PulseError::GrpcStatus {
-                code: status.code().to_string(),
-                message: format!(
-                    "dynamic grpc call {}/{} failed: {status}",
-                    input.service, input.method
-                ),
-            })?;
+        let mut request = tonic::Request::new(input.payload);
+        request.set_timeout(self.request_timeout);
+        let response = tokio::time::timeout(
+            self.request_timeout,
+            grpc.unary(request, path, RawBytesCodec),
+        )
+        .await
+        .map_err(|_| PulseError::RequestTimeout {
+            step: format!("grpc:{}/{}", input.service, input.method),
+        })?
+        .map_err(|status| {
+            if status.code() == tonic::Code::DeadlineExceeded {
+                PulseError::RequestTimeout {
+                    step: format!("grpc:{}/{}", input.service, input.method),
+                }
+            } else {
+                PulseError::TargetStatus {
+                    code: status.code().to_string(),
+                    message: format!(
+                        "dynamic grpc call {}/{} failed: {status}",
+                        input.service, input.method
+                    ),
+                }
+            }
+        })?;
 
         Ok(DynamicGrpcResponse {
             payload: response.into_inner(),
         })
+    }
+
+    fn validate_unary_method(&self, service: &str, method: &str) -> Result<(), PulseError> {
+        let meta = self.method_meta(service, method)?;
+        if meta.client_streaming || meta.server_streaming {
+            return Err(PulseError::InvalidScenario(format!(
+                "method {service}/{method} is streaming; only unary methods are supported"
+            )));
+        }
+        Ok(())
     }
 
     fn encode_request_fields(
@@ -228,7 +294,7 @@ fn load_schema(path: &str) -> Result<(MethodRegistry, MessageRegistry), PulseErr
 
                 let key = (full_service_name.clone(), method_name.clone());
                 let meta = MethodMeta {
-                    route_path: format!("/{}/{}", full_service_name, method_name),
+                    route_path: format!("/{full_service_name}/{method_name}"),
                     client_streaming: method.client_streaming.unwrap_or(false),
                     server_streaming: method.server_streaming.unwrap_or(false),
                     input_type,
@@ -402,8 +468,7 @@ fn encode_message(
         };
         let field_schema = schema.fields_by_number.get(field_number).ok_or_else(|| {
             PulseError::Client(format!(
-                "field number '{}' missing from schema for '{message_name}'",
-                field_number
+                "field number '{field_number}' missing from schema for '{message_name}'"
             ))
         })?;
         field_pairs.push((*field_number, field_schema, field_value));

@@ -18,6 +18,14 @@ pub struct StepPorts {
 #[async_trait]
 pub trait Step: Send + Sync {
     fn name(&self) -> &str;
+    /// Stable, non-secret material used to detect a scenario definition change
+    /// while a dispatch window is still incomplete.
+    fn fingerprint_material(&self) -> String {
+        self.name().to_string()
+    }
+    fn validate(&self, _ports: &StepPorts) -> Result<(), PulseError> {
+        Ok(())
+    }
     fn requires_dynamic_grpc(&self) -> bool {
         false
     }

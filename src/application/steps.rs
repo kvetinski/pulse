@@ -54,6 +54,48 @@ impl Step for DynamicGrpcStep {
         &self.name
     }
 
+    fn fingerprint_material(&self) -> String {
+        let request = match &self.request_spec {
+            GrpcRequestSpec::Empty => "empty".to_string(),
+            GrpcRequestSpec::StaticBase64Template(template) => {
+                format!("base64:{template}")
+            }
+            GrpcRequestSpec::FieldTemplate(value) => format!(
+                "fields:{}",
+                serde_json::to_string(value).unwrap_or_else(|_| "<invalid-json>".to_string())
+            ),
+        };
+        let mut extraction: Vec<_> = self.extraction.iter().collect();
+        extraction.sort_by(|left, right| left.0.cmp(right.0));
+        let extraction = extraction
+            .into_iter()
+            .map(|(key, path)| format!("{key}={path}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "grpc|endpoint={}|service={}|method={}|request={}|extract={}|payload_key={}",
+            self.endpoint_override.as_deref().unwrap_or("<default>"),
+            self.service,
+            self.method,
+            request,
+            extraction,
+            self.response_payload_context_key.as_deref().unwrap_or("")
+        )
+    }
+
+    fn validate(&self, ports: &StepPorts) -> Result<(), PulseError> {
+        let endpoint = self
+            .endpoint_override
+            .as_deref()
+            .unwrap_or(&ports.default_endpoint);
+        let gateway = ports.dynamic_grpc_gateways.get(endpoint).ok_or_else(|| {
+            PulseError::InvalidScenario(format!(
+                "dynamic gRPC gateway is not configured for endpoint '{endpoint}'"
+            ))
+        })?;
+        gateway.validate_unary_method(&self.service, &self.method)
+    }
+
     fn requires_dynamic_grpc(&self) -> bool {
         true
     }

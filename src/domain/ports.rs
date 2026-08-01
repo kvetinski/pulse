@@ -19,6 +19,8 @@ pub struct DynamicGrpcResponse {
 pub trait DynamicGrpcGateway: Send + Sync {
     async fn unary(&self, input: DynamicGrpcRequest) -> Result<DynamicGrpcResponse, PulseError>;
 
+    fn validate_unary_method(&self, service: &str, method: &str) -> Result<(), PulseError>;
+
     fn encode_request_fields(
         &self,
         service: &str,

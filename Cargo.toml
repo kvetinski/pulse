@@ -1,7 +1,8 @@
 [package]
 name = "pulse"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.88"
 
 [dependencies]
 async-trait = "0.1"
@@ -22,3 +23,6 @@ tonic = { version = "0.12", features = ["transport"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

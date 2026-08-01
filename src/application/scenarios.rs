@@ -13,6 +13,12 @@ use crate::domain::contracts::PartitionKeyStrategy;
 use crate::domain::scenario::{RepeatPolicy, Scenario, ScenarioConfig, Step};
 use crate::infrastructure::config::AppConfig;
 
+/// Startup bounds keep scenario-derived metric series, execution identities,
+/// and plan construction finite even for an untrusted configuration file.
+pub const MAX_CONFIGURED_SCENARIOS: usize = 128;
+pub const MAX_CONFIGURED_SCENARIO_NAME_BYTES: usize = 256;
+pub const MAX_CONFIGURED_STEPS_PER_SCENARIO: usize = 128;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScenarioFile {
@@ -131,6 +137,12 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
         errors.push("scenarios must contain at least one item".to_string());
         return errors;
     }
+    if file.scenarios.len() > MAX_CONFIGURED_SCENARIOS {
+        errors.push(format!(
+            "scenarios contains {} items; maximum is {MAX_CONFIGURED_SCENARIOS}",
+            file.scenarios.len()
+        ));
+    }
 
     let mut scenario_names = HashSet::new();
     for (i, scenario) in file.scenarios.iter().enumerate() {
@@ -138,6 +150,10 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
 
         if scenario.name.trim().is_empty() {
             errors.push(format!("{prefix}.name must not be empty"));
+        } else if scenario.name.len() > MAX_CONFIGURED_SCENARIO_NAME_BYTES {
+            errors.push(format!(
+                "{prefix}.name exceeds {MAX_CONFIGURED_SCENARIO_NAME_BYTES} bytes"
+            ));
         } else if !scenario_names.insert(scenario.name.trim().to_string()) {
             errors.push(format!("{prefix}.name '{}' is duplicated", scenario.name));
         }
@@ -165,8 +181,7 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
             RepeatEntry::Every { interval } => {
                 if parse_duration_literal(interval).is_err() {
                     errors.push(format!(
-                        "{prefix}.repeat.interval '{}' must use Ns/Nm/Nh format",
-                        interval
+                        "{prefix}.repeat.interval '{interval}' must use Ns/Nm/Nh format"
                     ));
                 }
             }
@@ -174,6 +189,11 @@ fn validate_schema(file: &ScenarioFile) -> Vec<String> {
 
         if scenario.steps.is_empty() {
             errors.push(format!("{prefix}.steps must contain at least one step"));
+        } else if scenario.steps.len() > MAX_CONFIGURED_STEPS_PER_SCENARIO {
+            errors.push(format!(
+                "{prefix}.steps contains {} items; maximum is {MAX_CONFIGURED_STEPS_PER_SCENARIO}",
+                scenario.steps.len()
+            ));
         }
 
         for (j, step) in scenario.steps.iter().enumerate() {
@@ -356,7 +376,10 @@ fn parse_duration_literal(value: &str) -> Result<Duration, String> {
         if mins == 0 {
             return Err(format!("duration must be > 0: {value}"));
         }
-        return Ok(Duration::from_secs(mins * 60));
+        let seconds = mins
+            .checked_mul(60)
+            .ok_or_else(|| format!("minutes duration exceeds u64 seconds: {value}"))?;
+        return Ok(Duration::from_secs(seconds));
     }
     if let Some(num) = value.strip_suffix('h') {
         let hours = num
@@ -365,7 +388,10 @@ fn parse_duration_literal(value: &str) -> Result<Duration, String> {
         if hours == 0 {
             return Err(format!("duration must be > 0: {value}"));
         }
-        return Ok(Duration::from_secs(hours * 3600));
+        let seconds = hours
+            .checked_mul(3_600)
+            .ok_or_else(|| format!("hours duration exceeds u64 seconds: {value}"))?;
+        return Ok(Duration::from_secs(seconds));
     }
     Err(format!(
         "unsupported duration format: {value} (use Ns/Nm/Nh)"
@@ -374,7 +400,19 @@ fn parse_duration_literal(value: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_scenarios_yaml;
+    use super::{
+        MAX_CONFIGURED_SCENARIO_NAME_BYTES, MAX_CONFIGURED_SCENARIOS,
+        MAX_CONFIGURED_STEPS_PER_SCENARIO, parse_duration_literal, parse_scenarios_yaml,
+    };
+
+    #[test]
+    fn oversized_duration_literals_are_rejected_without_overflow() {
+        let minutes = format!("{}m", u64::MAX / 60 + 1);
+        let hours = format!("{}h", u64::MAX / 3_600 + 1);
+
+        assert!(parse_duration_literal(&minutes).is_err());
+        assert!(parse_duration_literal(&hours).is_err());
+    }
 
     #[test]
     fn loads_valid_yaml() {
@@ -482,5 +520,45 @@ scenarios:
             Err(err) => err,
         };
         assert!(err.contains("only one of request_base64 or request_fields"));
+    }
+
+    #[test]
+    fn rejects_unbounded_scenario_names_counts_and_steps() {
+        let long_name = "x".repeat(MAX_CONFIGURED_SCENARIO_NAME_BYTES + 1);
+        let long_name_yaml = format!(
+            "version: 1\nscenarios:\n  - name: {long_name}\n    scenarios_per_sec: 1\n    max_concurrency: 1\n    duration: 5s\n    repeat:\n      type: once\n    steps:\n      - protocol: grpc\n        service: fixture.Service\n        method: Call\n"
+        );
+        let error = match parse_scenarios_yaml(&long_name_yaml, "http://127.0.0.1:8080") {
+            Ok(_) => panic!("oversized name must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("name exceeds"));
+
+        let step =
+            "      - protocol: grpc\n        service: fixture.Service\n        method: Call\n";
+        let too_many_steps = step.repeat(MAX_CONFIGURED_STEPS_PER_SCENARIO + 1);
+        let steps_yaml = format!(
+            "version: 1\nscenarios:\n  - name: TooManySteps\n    scenarios_per_sec: 1\n    max_concurrency: 1\n    duration: 5s\n    repeat:\n      type: once\n    steps:\n{too_many_steps}"
+        );
+        let error = match parse_scenarios_yaml(&steps_yaml, "http://127.0.0.1:8080") {
+            Ok(_) => panic!("oversized step list must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("steps contains"));
+
+        let scenario = |index: usize| {
+            format!(
+                "  - name: Scenario{index}\n    scenarios_per_sec: 1\n    max_concurrency: 1\n    duration: 5s\n    repeat:\n      type: once\n    steps:\n{step}"
+            )
+        };
+        let scenarios = (0..=MAX_CONFIGURED_SCENARIOS)
+            .map(scenario)
+            .collect::<String>();
+        let count_yaml = format!("version: 1\nscenarios:\n{scenarios}");
+        let error = match parse_scenarios_yaml(&count_yaml, "http://127.0.0.1:8080") {
+            Ok(_) => panic!("oversized scenario list must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("scenarios contains"));
     }
 }
